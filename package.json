@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs && node scripts/build-launcher.mjs",
+    "dev": "node scripts/dev-plugin.mjs",
     "docs:preview": "tsx scripts/generate-doc-preview.ts",
     "qa:local-icons": "tsx scripts/generate-local-icon-qa.ts",
     "smoke:relay": "tsx scripts/relay-smoke.ts",

@@ -2,6 +2,36 @@
 
 Thanks for helping improve Codex Deck.
 
+## Local Stream Deck development
+
+Build and link the development plugin once:
+
+```sh
+npm run build
+streamdeck dev
+streamdeck link dist/com.xonika9.codex-deck.sdPlugin
+```
+
+Then keep this command running while editing `src/` or `static/`:
+
+```sh
+npm run dev
+```
+
+It rebuilds the plugin and restarts only `com.xonika9.codex-deck` after a
+successful change. It does not restart the Stream Deck app, Codex, or the
+platform watcher. Because the fork uses a distinct UUID, create a separate
+development profile with the fork's actions instead of editing or overwriting an
+upstream profile.
+
+The installed macOS watcher is a copied runtime, not a live source link. Rebuild
+and reinstall it only when launcher or watcher behavior changes:
+
+```zsh
+npm run build
+release/codex-deck-launcher-macos/start-codex-deck.sh install
+```
+
 ## Before opening a pull request
 
 1. Preserve independent Windows-only, macOS-only, and optional multi-host operation. State clearly which paths received automated, live-app, and physical-device testing.
