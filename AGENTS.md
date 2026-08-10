@@ -4,6 +4,7 @@
 
 - Use Node.js 20 or newer and install dependencies with `npm ci`.
 - For code changes, run `npm run check`, `npm test`, and `npm run validate`.
+- Never create branches — always commit and work directly on `main`.
 - For iOS changes, also run:
 
   ```zsh
