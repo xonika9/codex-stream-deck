@@ -31,7 +31,7 @@ source_ref: crunchy/main
 | Явная привязка relay-команды к владельцу/host | **adopt now** | В текущем коде remote-команда проверяет наличие relay, но не подтверждает, что подключён именно захваченный `hostId`. Это узкое усиление уже существующей multi-host границы. |
 | Long-press shortcuts на Agent 1-6 | **defer** | Пользовательская ценность понятна, но реализация прошла через семь последующих исправлений гонок и shutdown. Перенос требует отдельной характеристики текущего action lifecycle и физического Stream Deck. |
 | macOS modifier handling | **defer** | Это зависимый backend для отложенного long-press, а не самостоятельная возможность текущего продукта. Unit-тесты подтверждают план событий, но не Accessibility, CoreGraphics и отсутствие stuck modifiers в живой системе. |
-| Otty/pi integration | **defer, отдельный продуктовый выбор** | Интеграция меняет источник Agent 1-6, добавляет сторонний CLI и pi extension. В текущем виде Otty-ветка прекращает обычное обновление Codex snapshot, что конфликтует с независимым multi-host и iPhone relay. |
+| Otty/pi integration | **reject, вне продукта** | Пользователю эта интеграция не нужна. Сторонний CLI, pi extension и отдельная модель состояния не входят в roadmap Codex Deck. |
 
 ---
 
@@ -195,7 +195,7 @@ source_ref: crunchy/main
 
 ---
 
-## Решение 4: defer Otty/pi как отдельный продуктовый выбор
+## Решение 4: reject Otty/pi
 
 ### Ценность и доказательства
 
@@ -207,7 +207,11 @@ source_ref: crunchy/main
 - context ring переиспользует существующий renderer;
 - unread receipt зависит от foreground Otty + active tab и не читает prompt/response content.
 
-### Почему это не технический hotfix
+### Почему интеграция не переносится
+
+`session-settled: user-directed` — Otty/pi не нужен продукту и исключён из roadmap. Это не отложенный технический срез и не вопрос будущей приоритизации: код, extension, настройки, manifest/build-изменения и документация Otty из `crunchy/main` не переносятся.
+
+Дополнительно статический аудит показал, что перенос был бы архитектурно дорогим:
 
 Otty меняет назначение Agent 1-6 и добавляет новый продуктовый режим, внешнюю установку extension, сторонний CLI и локальную модель read receipts. Это требует решения о поддерживаемых версиях Otty/pi, установке extension, диагностике и месте функции в Windows/macOS/multi-host продукте.
 
@@ -215,23 +219,7 @@ Otty меняет назначение Agent 1-6 и добавляет новы�
 
 Также присутствуют fork-несовместимые изменения: `8ad5441` редактирует README и `static/manifest.json` со старыми `com.simeo`/Dazer metadata, а `scripts/build.mjs` из ветки копирует extension в прежний package lineage. Эти файлы нельзя переносить целиком.
 
-### Продуктовые вопросы до планирования реализации
-
-- Otty заменяет Agent source локально только на одном Mac или должен появиться как отдельный host/source в объединённой модели?
-- Должны ли Windows и iPhone видеть Otty tabs, и если да, какой typed snapshot/command contract это выражает?
-- Кто устанавливает и обновляет `extensions/otty-pi-agent-state.ts`, какие версии Otty CLI и pi поддерживаются?
-- Допустимо ли сохранять `sessionId` и `cwd`, если adapter фактически использует только pane, PID, state и timestamps? По принципу минимизации эти поля стоит удалить или отдельно обосновать.
-- Как должны сосуществовать Otty unread receipts и текущая Codex session ownership/read-state модель?
-
-### Если продуктовый выбор будет положительным
-
-Разбить работу минимум на три независимых среза:
-
-1. **Adapter proof, macOS-only:** CLI parser, pane normalization, stale PID filtering и focus без подключения к controller. Проверить на поддерживаемых версиях Otty/pi.
-2. **Источник Agent без остановки Codex refresh:** объединить Otty polling с текущим non-overlapping refresh так, чтобы Codex snapshots, health, iPhone и multi-host продолжали обновляться. Переключатель должен быть opt-in и локальным, пока relay contract не расширен.
-3. **Context/unread:** только после стабильного tab mapping добавить context percentage и минимизированные receipts. Foreground detection failure не должен помечать completion прочитанным.
-
-Для каждого среза нужны Windows-only regression, macOS-only live Otty/pi, optional multi-host relay и iPhone transport checks. Otty live-app evidence и физический Stream Deck evidence отчётны отдельно.
+Повторное рассмотрение Otty/pi требует нового явного пользовательского решения; этот аудит не оставляет скрытой задачи на будущую реализацию.
 
 ---
 
@@ -268,12 +256,6 @@ Otty меняет назначение Agent 1-6 и добавляет новы�
 
 Не расширять relay payload и не показывать режим на Windows.
 
-### Срез D. Otty/pi - только после отдельного продуктового решения
-
-Зависимости: ответы на вопросы о source model, transport visibility, installation/support contract и data minimization.
-
-Начинать с adapter proof. Не смешивать Otty с long-press, modifier handling, package rename или release assets.
-
 ---
 
 ## Явно вне scope
@@ -283,7 +265,7 @@ Otty меняет назначение Agent 1-6 и добавляет новы�
 - Изменение production-кода в рамках этого аудита.
 - Изменение README, README.ru, hero/usage preview, MIC/PR10 файлов, plugin icons, package versions или release bundles.
 - Перенос старых `com.simeo.codex-deck` UUID, Dazer metadata или старого dist path.
-- Публикация Otty/pi как поддерживаемой функции до отдельного продуктового решения.
+- Любая интеграция Otty/pi, включая CLI adapter, pi extension, Agent source, context и unread receipts.
 - Утверждение live-app или physical-device результата на основании исходных unit tests.
 
 ## Общие риски
@@ -293,7 +275,6 @@ Otty меняет назначение Agent 1-6 и добавляет новы�
 - Renderer API внутренний и нестабильный. Новый public selection path должен переиспользовать текущую нормализацию `eb98274` и получить compatibility note.
 - Relay held-action leases расширяют server state и должны быть доказаны для нескольких authenticated clients, disconnect, timeout и shutdown.
 - JXA/CoreGraphics требует Accessibility и живого macOS доказательства; unit plan событий не исключает stuck modifier.
-- Otty CLI и pi extension представляют новый внешний compatibility contract, которого сейчас нет в документации поддержки.
 
 ## Проверка самого аудита
 
