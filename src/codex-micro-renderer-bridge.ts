@@ -42,6 +42,33 @@ export type AgentDispatchPlan =
   | { kind: "native"; slot: number; threadKey: string }
   | { kind: "direct"; threadKey: string };
 
+const THREAD_ID_SUFFIX = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const BARE_THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Compare renderer IDs without changing the task key sent to Codex or a relay peer. */
+export function canonicalThreadId(threadKey: string): string {
+  return threadKey.match(THREAD_ID_SUFFIX)?.[1]?.toLowerCase() ?? threadKey;
+}
+
+/** Bare renderer IDs may match one prefixed host ID; two different host prefixes never do. */
+export function threadKeysEquivalent(left: string, right: string): boolean {
+  if (left.toLowerCase() === right.toLowerCase()) return true;
+  return canonicalThreadId(left) === canonicalThreadId(right) &&
+    (BARE_THREAD_ID.test(left) || BARE_THREAD_ID.test(right));
+}
+
+/** Prefer an exact host identity and use a canonical fallback only when it is unambiguous. */
+export function selectSidebarThreadId(threadKey: string, sidebarThreadIds: readonly string[]): string | undefined {
+  const exact = sidebarThreadIds.find((candidate) => candidate.toLowerCase() === threadKey.toLowerCase());
+  if (exact) return exact;
+  const matches = sidebarThreadIds.filter((candidate) => threadKeysEquivalent(threadKey, candidate));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function nativeActionKey(slot: MicroActionSlot): string {
+  return slot === "ACT10_ACT11" ? "ACT10" : slot;
+}
+
 export function resolveAgentDispatch(
   snapshot: MicroSnapshot,
   requestedSlot: number,
@@ -354,24 +381,46 @@ export class CodexMicroRendererBridge {
   private async ensureThreadActivated(threadKey: string): Promise<void> {
     const result = await this.evaluate<"active" | "opened" | "missing" | "failed">(`(async () => {
       const threadKey = ${JSON.stringify(threadKey)};
-      const activeThreadKey = () => document.querySelector('[data-above-composer-conversation-id]')
-        ?.getAttribute('data-above-composer-conversation-id')
-        ?? document.querySelector('[data-app-action-sidebar-thread-id][data-app-action-sidebar-thread-active="true"]')
+      const threadIdSuffix = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+      const bareThreadId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const canonicalThreadId = (value) => value?.match(threadIdSuffix)?.[1]?.toLowerCase() ?? value;
+      const matchesThreadKey = (candidate) => {
+        if (!candidate) return false;
+        if (candidate.toLowerCase() === threadKey.toLowerCase()) return true;
+        return canonicalThreadId(candidate) === canonicalThreadId(threadKey) &&
+          (bareThreadId.test(candidate) || bareThreadId.test(threadKey));
+      };
+      const activeSidebarThreadKey = () => document.querySelector('[data-app-action-sidebar-thread-id][data-app-action-sidebar-thread-active="true"]')
           ?.getAttribute('data-app-action-sidebar-thread-id')
         ?? document.querySelector('[data-app-action-sidebar-thread-id][aria-current="page"]')
           ?.getAttribute('data-app-action-sidebar-thread-id')
         ?? null;
+      const activeComposerThreadKey = () => document.querySelector('[data-above-composer-conversation-id]')
+        ?.getAttribute('data-above-composer-conversation-id')
+        ?? null;
+      const isActiveThread = () => {
+        const sidebarThreadKey = activeSidebarThreadKey();
+        return sidebarThreadKey ? matchesThreadKey(sidebarThreadKey) : matchesThreadKey(activeComposerThreadKey());
+      };
       const waitForActive = async (duration) => {
         const deadline = Date.now() + duration;
         while (Date.now() < deadline) {
-          if (activeThreadKey() === threadKey) return true;
+          if (isActiveThread()) return true;
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
-        return activeThreadKey() === threadKey;
+        return isActiveThread();
       };
       if (await waitForActive(250)) return 'active';
-      const item = [...document.querySelectorAll('[data-app-action-sidebar-thread-id]')]
-        .find((element) => element.getAttribute('data-app-action-sidebar-thread-id') === threadKey);
+      const items = [...document.querySelectorAll('[data-app-action-sidebar-thread-id]')];
+      const sidebarThreadKeys = items
+        .map((element) => element.getAttribute('data-app-action-sidebar-thread-id'))
+        .filter(Boolean);
+      const exactThreadKey = sidebarThreadKeys.find((candidate) => candidate.toLowerCase() === threadKey.toLowerCase());
+      const equivalentThreadKeys = exactThreadKey ? [] : sidebarThreadKeys.filter(matchesThreadKey);
+      const selectedThreadKey = exactThreadKey ?? (equivalentThreadKeys.length === 1 ? equivalentThreadKeys[0] : null);
+      const item = selectedThreadKey
+        ? items.find((element) => element.getAttribute('data-app-action-sidebar-thread-id') === selectedThreadKey)
+        : null;
       if (!item) return 'missing';
       const selector = 'button, a, [role="button"], [role="link"]';
       const clickable = item.matches(selector) ? item : item.querySelector(selector) ?? item.closest(selector) ?? item;
@@ -387,7 +436,7 @@ export class CodexMicroRendererBridge {
   }
 
   async sendAction(slot: MicroActionSlot, act: 0 | 1): Promise<void> {
-    const key = slot === "ACT10_ACT11" ? "ACT10" : slot;
+    const key = nativeActionKey(slot);
     await this.dispatch("codex-micro-hid-event", { event: { key, act, slot: null, threadKey: null } }, "codex-micro-hid-event");
   }
 

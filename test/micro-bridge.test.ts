@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
-  REASONING_ENCODER_KEYS, resolveAgentDispatch, retainEvaluationPromise, selectCodexMainTarget
+  canonicalThreadId, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
+  retainEvaluationPromise, selectCodexMainTarget, selectSidebarThreadId, threadKeysEquivalent
 } from "../src/codex-micro-renderer-bridge.js";
 import { ADDITIONAL_KEYCAPS, OFFICIAL_KEYCAP_IDS } from "../src/keycaps.js";
 import { visualStatusFromMicro } from "../src/status.js";
@@ -75,6 +76,28 @@ test("renderer evaluations retain their awaited promise until CDP has collected 
   assert.match(expression, /setTimeout\(\(\) => store\.delete/);
   const namespaced = retainEvaluationPromise("Promise.resolve(true)", "bridge-a-1");
   assert.match(namespaced, /codex-deck-bridge-a-1/);
+});
+
+test("renderer thread comparisons accept bare IDs without conflating host-prefixed mirrors", () => {
+  const threadId = "019fc4e4-4ecc-7f20-b7f5-855c11da7b37";
+  const local = `local:${threadId}`;
+  const remote = `remote-ssh-codex-managed:mlgpu:${threadId}`;
+
+  assert.equal(canonicalThreadId(threadId), threadId);
+  assert.equal(canonicalThreadId(local), threadId);
+  assert.equal(canonicalThreadId(remote), threadId);
+  assert.equal(threadKeysEquivalent(local, threadId), true);
+  assert.equal(threadKeysEquivalent(remote, threadId), true);
+  assert.equal(threadKeysEquivalent(local, remote), false);
+  assert.equal(selectSidebarThreadId(local, [threadId]), threadId);
+  assert.equal(selectSidebarThreadId(remote, [local, remote]), remote);
+  assert.equal(selectSidebarThreadId(threadId, [local]), local);
+  assert.equal(selectSidebarThreadId(threadId, [local, remote]), undefined);
+});
+
+test("native action 5 maps the combined layout slot to Codex push-to-talk", () => {
+  assert.equal(nativeActionKey("ACT10_ACT11"), "ACT10");
+  assert.equal(nativeActionKey("ACT06"), "ACT06");
 });
 
 test("agent routing follows the stable thread identity when a cross-host slot is stale", () => {
