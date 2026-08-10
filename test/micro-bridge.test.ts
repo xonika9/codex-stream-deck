@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
-  canonicalThreadId, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
+  canonicalThreadId, CodexMicroRendererBridge, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
   retainEvaluationPromise, selectCodexMainTarget, selectSidebarThreadId, threadKeysEquivalent
 } from "../src/codex-micro-renderer-bridge.js";
 import { ADDITIONAL_KEYCAPS, OFFICIAL_KEYCAP_IDS } from "../src/keycaps.js";
@@ -98,6 +98,39 @@ test("renderer thread comparisons accept bare IDs without conflating host-prefix
 test("native action 5 maps the combined layout slot to Codex push-to-talk", () => {
   assert.equal(nativeActionKey("ACT10_ACT11"), "ACT10");
   assert.equal(nativeActionKey("ACT06"), "ACT06");
+});
+
+test("remote MIC keycaps use the native push-to-talk press/release sequence", async () => {
+  const bridge = new CodexMicroRendererBridge(() => {});
+  const nativeEvents: Array<{ type: string; payload: object; requiredHandler: string }> = [];
+  const evaluated: string[] = [];
+  Object.assign(bridge, {
+    dispatch: async (type: string, payload: object, requiredHandler: string) => {
+      nativeEvents.push({ type, payload, requiredHandler });
+    },
+    ensureConnected: async () => {},
+    evaluate: async (expression: string) => { evaluated.push(expression); }
+  });
+
+  await bridge.runKeycap("MIC");
+  assert.deepEqual(nativeEvents, [
+    {
+      type: "codex-micro-hid-event",
+      payload: { event: { key: "ACT10", act: 1, slot: null, threadKey: null } },
+      requiredHandler: "codex-micro-hid-event"
+    },
+    {
+      type: "codex-micro-hid-event",
+      payload: { event: { key: "ACT10", act: 0, slot: null, threadKey: null } },
+      requiredHandler: "codex-micro-hid-event"
+    }
+  ]);
+  assert.deepEqual(evaluated, [], "MIC must not use the standalone keycap fallback");
+
+  await bridge.runKeycap("FAST");
+  assert.equal(nativeEvents.length, 2, "other keycaps keep the standalone path");
+  assert.equal(evaluated.length, 1);
+  assert.match(evaluated[0]!, /keycapGetter\("FAST"\)/);
 });
 
 test("agent routing follows the stable thread identity when a cross-host slot is stale", () => {

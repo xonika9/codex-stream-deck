@@ -457,6 +457,11 @@ export class CodexMicroRendererBridge {
 
   async runKeycap(keycapId: OfficialKeycapId): Promise<void> {
     if (!OFFICIAL_KEYCAP_IDS.includes(keycapId)) throw new Error(`Unknown Codex Micro keycap: ${keycapId}`);
+    if (keycapId === "MIC") {
+      await this.sendAction("ACT10_ACT11", 1);
+      await this.sendAction("ACT10_ACT11", 0);
+      return;
+    }
     await this.ensureConnected();
     const expression = `(async () => {
       const urls = [...new Set([
