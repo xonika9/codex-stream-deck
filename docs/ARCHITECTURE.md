@@ -133,11 +133,14 @@ Agent keys are original deterministic SVGs generated in memory from task title a
 | `approval` | orange pause/input |
 | `error` | red error |
 
-When Codex exposes token usage for a task, an optional top-left ring shows the
+When Codex exposes token usage for a task, an optional top-right ring shows the
 latest context-window percentage. Orange begins at 80% and red at 92%. Select
 any Agent key in Stream Deck's property inspector to show or hide this ring
 globally for all six agent keys on that computer. The setting is independent on
 Windows and macOS and does not stop context metadata from syncing.
+
+The upper-left position is reserved for the task-state mark. If host health is
+not ready, the host-health mark replaces it so the two signals do not overlap.
 
 The renderer derives the active Codex appearance from explicit theme tokens when available and falls back to the computed renderer surface luminance. Dark mode uses layered charcoal surfaces rather than pure black, with off-white text and slightly lifted status colors for the Stream Deck display.
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { renderAgentSvg, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap, SIGNAL_COLORS } from "../src/render.js";
+import { renderAgentKey, renderAgentSvg, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap, SIGNAL_COLORS } from "../src/render.js";
 
 test("dark agent tiles use Codex-like charcoal surfaces without pure black", () => {
   const svg = renderAgentSvg(0, "Building dark mode", "thinking", true, 4, "dark");
@@ -24,6 +24,8 @@ test("light and dark agent themes remain visually distinct", () => {
 test("agent context ring is bounded and can be hidden globally", () => {
   const visible = renderAgentSvg(0, "Context test", "thinking", false, 0, "dark", "M", "ready", 84, true);
   assert.match(visible, /data-context-used="84"/);
+  assert.match(visible, /cx="116" cy="25"/);
+  assert.match(visible, /data-agent-host="M"><rect x="86" y="16"/);
   assert.match(visible, new RegExp(SIGNAL_COLORS.dark.input, "i"));
 
   const hidden = renderAgentSvg(0, "Context test", "thinking", false, 0, "dark", "M", "ready", 84, false);
@@ -36,12 +38,66 @@ test("agent context ring is bounded and can be hidden globally", () => {
   assert.doesNotMatch(empty, /data-context-used=/);
 });
 
+test("agent titles are enlarged and all state indicators occupy the upper-left slot", () => {
+  const complete = renderAgentSvg(0, "Review changes", "complete", false, 0, "dark", undefined, "ready", 42, true);
+  assert.match(complete, /font-size="26\.00"/);
+  assert.match(complete, /data-agent-motion="complete"[\s\S]*cx="25" cy="25" r="11"/);
+  assert.match(complete, /data-context-used="42"[\s\S]*cx="116" cy="25"/);
+
+  const idle = renderAgentSvg(0, "Ready", "idle", false, 0, "dark");
+  assert.match(idle, /font-size="27\.00"/);
+  assert.match(idle, /data-agent-motion="idle" cx="25" cy="25" r="6" fill="#FFFFFF"/);
+
+  const working = renderAgentSvg(0, "Building UI", "thinking", false, 4, "dark");
+  assert.match(working, /data-agent-motion="working"[\s\S]*x="13" y="19"/);
+  assert.match(working, /fill="#FFFFFF" fill-opacity="\.98"/);
+
+  const lightWorking = renderAgentSvg(0, "Building UI", "thinking", false, 4, "light");
+  assert.match(lightWorking, /data-agent-motion="working"[\s\S]*fill="#15202A" fill-opacity="\.98"/);
+
+  const nextWorking = renderAgentSvg(1, "Building API", "thinking", false, 4, "dark");
+  assert.match(working, /data-agent-motion="working"[\s\S]*<rect x="19\.80" y="21"/);
+  assert.match(nextWorking, /data-agent-motion="working"[\s\S]*<rect x="28\.20" y="21"/);
+
+  const input = renderAgentSvg(0, "Needs review", "input", false, 0, "dark");
+  assert.match(input, /data-agent-motion="input"[\s\S]*x="19" y="17"/);
+
+  const error = renderAgentSvg(0, "Test failed", "error", false, 0, "dark");
+  assert.match(error, /data-agent-motion="error"[\s\S]*cx="25" cy="25" r="11"/);
+
+  const empty = renderAgentSvg(0, "Not assigned", "empty", false, 0, "dark");
+  assert.match(empty, /data-agent-motion="empty" x="18" y="23"/);
+});
+
+test("long agent titles can use three centered lines", () => {
+  const longTitle = renderAgentSvg(0, "Investigate yellow triangle", "thinking", false, 0, "dark");
+  assert.match(longTitle, /y="62"[\s\S]*>Investigate<\/text>/);
+  assert.match(longTitle, /y="91"[\s\S]*>yellow<\/text>/);
+  assert.match(longTitle, /y="120"[\s\S]*>triangle<\/text>/);
+  assert.match(longTitle, /font-size="24\.00"/);
+});
+
+test("agent titles wrap before reaching the horizontal key edges", () => {
+  const title = renderAgentSvg(0, "Building UI", "thinking", false, 0, "dark");
+  assert.match(title, /x="72" y="73"[\s\S]*>Building<\/text>/);
+  assert.match(title, /x="72" y="107"[\s\S]*>UI<\/text>/);
+  assert.doesNotMatch(title, />Building UI<\/text>/);
+});
+
+test("agent title wrapping preserves Unicode code points", () => {
+  assert.doesNotThrow(() => renderAgentKey(0, "123456789😀abc", "thinking", false, 0, "dark"));
+  const svg = renderAgentSvg(0, "123456789😀abc", "thinking", false, 0, "dark");
+  assert.match(svg, />123456789😀<\/text>/);
+  assert.match(svg, />abc<\/text>/);
+});
+
 test("user-local monochrome SVGs normalize to an off-white dark glyph", () => {
   const input = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M2 2h20v20H2z" stroke="#000"/></svg>';
   const output = decodeURIComponent(renderImportedKeycap(input, "dark").replace(/^data:image\/svg\+xml;charset=utf8,/, ""));
   assert.match(output, /data-theme="dark"/);
   assert.match(output, /fill="#F2F2EE"/);
   assert.match(output, /stroke="#F2F2EE"/);
+  assert.match(output, /translate\(18\.000 18\.000\) scale\(4\.50000\)/);
   assert.doesNotMatch(output, /#000(?:000)?\b/i);
 });
 
@@ -69,6 +125,8 @@ test("dark title contrast stays above WCAG AA for small text", () => {
 test("missing local assets receive a readable themed fallback", () => {
   const output = decodeURIComponent(renderFallbackKeycap("TERM", "dark").replace(/^data:image\/svg\+xml;charset=utf8,/, ""));
   assert.match(output, /data-icon-source="fallback-label"/);
+  assert.match(output, /font-size="34"/);
+  assert.match(output, /font-weight="700"/);
   assert.match(output, />TERM<\/text>/);
   assert.doesNotMatch(output, /#000(?:000)?\b/i);
 });
@@ -82,8 +140,11 @@ test("host target and affected agent keys expose degraded and offline state", ()
   const degradedAgent = renderAgentSvg(0, "Last known task", "idle", false, 0, "dark", "M", "degraded");
   assert.match(degradedAgent, /data-agent-host="M"/);
   assert.match(degradedAgent, /data-agent-host-health="degraded"/);
+  assert.doesNotMatch(degradedAgent, /data-agent-motion=/);
+  assert.doesNotMatch(degradedAgent, /data-context-used=/);
   const offlineAgent = renderAgentSvg(0, "Last known task", "idle", false, 0, "dark", "M", "offline");
   assert.match(offlineAgent, /data-agent-host-health="offline"/);
+  assert.doesNotMatch(offlineAgent, /data-agent-motion=/);
 });
 
 function contrast(foreground: string, background: string): number {
