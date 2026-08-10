@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/assets/codex-deck-hero.png" alt="" width="100%">
+</p>
+
+<p align="center">
   Language: <strong>English</strong> · <a href="README.ru.md">Русский</a>
 </p>
 
