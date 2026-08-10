@@ -8,6 +8,7 @@ import test from "node:test";
 import WebSocket from "ws";
 import { generate } from "selfsigned";
 import { CodexRelayClient, RELAY_SNAPSHOT_STALE_MS, resolveRelayHealth } from "../src/codex-relay-client.js";
+import { DeckController } from "../src/controller.js";
 import { isAllowedRelayHost, isPrivateLanHost, privateLanAddresses } from "../src/relay-network.js";
 import {
   CodexRelayServer, readRelayServerConfig, relayDiscoveryTxt,
@@ -891,23 +892,208 @@ test("relay client preserves last-known tasks but marks their host offline after
   const server = new CodexRelayServer(
     { enabled: true, listenHost: "127.0.0.1", port, token: "t".repeat(32) }, host, control, () => {}
   );
-  await server.start();
   const deliveredSnapshots: HostSnapshot[] = [];
   const client = new CodexRelayClient(
     { enabled: true, url: `ws://127.0.0.1:${port}`, token: "t".repeat(32) },
     (value) => deliveredSnapshots.push(value), () => {}
   );
-  client.start();
-  await waitUntil(() => client.currentHealth().state === "ready");
-  assert.equal(deliveredSnapshots.length, 1);
-  const lastKnown = client.currentSnapshot();
-  assert.equal(lastKnown?.snapshot.slots[0]?.title, "Task 1");
-  await server.close();
-  await waitUntil(() => client.currentHealth().state === "offline");
-  assert.equal(deliveredSnapshots.length, 1, "health-only transitions must not call the snapshot callback");
-  assert.equal(client.currentSnapshot(), lastKnown);
-  assert.equal(client.isConnected(), false);
-  client.close();
+  let originalServerStarted = false;
+  let replacementServer: CodexRelayServer | undefined;
+  try {
+    await server.start();
+    originalServerStarted = true;
+    client.start();
+    await waitUntil(() => client.currentHealth().state === "ready");
+    assert.equal(deliveredSnapshots.length, 1);
+    const lastKnown = client.currentSnapshot();
+    assert.equal(lastKnown?.snapshot.slots[0]?.title, "Task 1");
+    await server.close();
+    originalServerStarted = false;
+    await waitUntil(() => client.currentHealth().state === "offline");
+    assert.equal(deliveredSnapshots.length, 1, "health-only transitions must not call the snapshot callback");
+    assert.equal(client.currentSnapshot(), lastKnown);
+    assert.equal(client.currentHost(), undefined);
+    assert.equal(client.isConnected(), false);
+    const replacementHost: CodexHost = {
+      hostId: "11111111-1111-4111-8111-111111111111", hostName: "Replacement Mac", platform: "darwin"
+    };
+    replacementServer = new CodexRelayServer(
+      { enabled: true, listenHost: "127.0.0.1", port, token: "t".repeat(32) },
+      replacementHost, control, () => {}
+    );
+    await replacementServer.start();
+    await waitUntil(() => client.currentHealth().state === "ready", 3_000);
+    assert.equal(client.currentHost()?.hostId, replacementHost.hostId);
+    assert.equal(deliveredSnapshots.length, 2);
+  } finally {
+    client.close();
+    if (replacementServer) await replacementServer.close();
+    if (originalServerStarted) await server.close();
+  }
+});
+
+test("relay client rejects a command when the authenticated host does not match its expected owner", async () => {
+  const port = await freePort();
+  const calls: unknown[] = [];
+  const control = {
+    refresh: async () => snapshot,
+    sendAgent: async () => {},
+    sendAction: async (slot: string, act: 0 | 1) => { calls.push([slot, act]); },
+    sendJoystick: async () => {}, sendEncoder: async () => {}, adjustReasoning: async () => {},
+    runKeycap: async () => {}, consumeRateLimitReset: async () => {}
+  };
+  const server = new CodexRelayServer(
+    { enabled: true, listenHost: "127.0.0.1", port, token: "t".repeat(32) }, host, control, () => {}
+  );
+  const client = new CodexRelayClient(
+    { enabled: true, url: `ws://127.0.0.1:${port}`, token: "t".repeat(32) }, () => {}, () => {}
+  );
+  try {
+    await server.start();
+    client.start();
+    await waitUntil(() => client.currentHealth().state === "ready");
+    await assert.rejects(
+      client.send({ kind: "action", slot: "ACT10_ACT11", act: 1 }, "different-host"),
+      /expected remote Codex host/
+    );
+    assert.deepEqual(calls, [], "a mismatched owner must be rejected before socket.send");
+  } finally {
+    client.close();
+    await server.close();
+  }
+});
+
+test("relay client ignores state and command results from a replaced socket", async () => {
+  const delivered: HostSnapshot[] = [];
+  const client = new CodexRelayClient(
+    { enabled: true, url: "ws://127.0.0.1:47651", token: "t".repeat(32) },
+    (value) => delivered.push(value), () => {}
+  );
+  const firstSocket = { readyState: WebSocket.OPEN } as WebSocket;
+  const replacementSocket = { readyState: WebSocket.OPEN } as WebSocket;
+  const internal = client as unknown as {
+    socket?: WebSocket;
+    readySocket?: WebSocket;
+    host?: CodexHost;
+    pending: Map<string, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>;
+    handleMessage: (socket: WebSocket, raw: string) => void;
+  };
+  const deliver = (socket: WebSocket, message: unknown): void => {
+    internal.handleMessage(socket, JSON.stringify(message));
+  };
+  internal.socket = firstSocket;
+  deliver(firstSocket, {
+    type: "ready", protocol: RELAY_PROTOCOL_VERSION, host,
+    capabilities: [], bridge: "native-codex-micro"
+  });
+  internal.socket = replacementSocket;
+  internal.readySocket = replacementSocket;
+  const replacementHost: CodexHost = {
+    hostId: "11111111-1111-4111-8111-111111111111", hostName: "Replacement", platform: "win32"
+  };
+  internal.host = replacementHost;
+  let staleResultResolved = false;
+  const timer = setTimeout(() => {}, 1_000);
+  internal.pending.set("stale-request", {
+    resolve: () => { staleResultResolved = true; }, reject: () => {}, timer
+  });
+  try {
+    deliver(firstSocket, {
+      type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host,
+      snapshot, observedAt: Date.now()
+    });
+    deliver(firstSocket, {
+      type: "result", protocol: RELAY_PROTOCOL_VERSION, requestId: "stale-request", ok: true
+    });
+    assert.equal(client.currentHost()?.hostId, replacementHost.hostId);
+    assert.equal(delivered.length, 0);
+    assert.equal(staleResultResolved, false);
+    assert.equal(internal.pending.has("stale-request"), true);
+  } finally {
+    clearTimeout(timer);
+    internal.pending.clear();
+  }
+});
+
+test("relay client ignores state and command results before the current socket is ready", () => {
+  const delivered: HostSnapshot[] = [];
+  const client = new CodexRelayClient(
+    { enabled: true, url: "ws://127.0.0.1:47651", token: "t".repeat(32) },
+    (value) => delivered.push(value), () => {}
+  );
+  const socket = { readyState: WebSocket.OPEN } as WebSocket;
+  const internal = client as unknown as {
+    socket?: WebSocket;
+    pending: Map<string, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>;
+    handleMessage: (socket: WebSocket, raw: string) => void;
+  };
+  const deliver = (message: unknown): void => {
+    internal.handleMessage(socket, JSON.stringify(message));
+  };
+  internal.socket = socket;
+  let prematureResultResolved = false;
+  const timer = setTimeout(() => {}, 1_000);
+  internal.pending.set("premature-request", {
+    resolve: () => { prematureResultResolved = true; }, reject: () => {}, timer
+  });
+  try {
+    deliver({
+      type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host,
+      snapshot, observedAt: Date.now()
+    });
+    deliver({
+      type: "health", protocol: RELAY_PROTOCOL_VERSION, host,
+      state: "degraded", reason: "codex-unavailable"
+    });
+    deliver({
+      type: "result", protocol: RELAY_PROTOCOL_VERSION, requestId: "premature-request", ok: true
+    });
+    assert.equal(client.currentHost(), undefined);
+    assert.equal(client.currentSnapshot(), undefined);
+    assert.equal(client.currentHealth().state, "connecting");
+    assert.equal(delivered.length, 0);
+    assert.equal(prematureResultResolved, false);
+    assert.equal(internal.pending.has("premature-request"), true);
+  } finally {
+    clearTimeout(timer);
+    internal.pending.clear();
+  }
+});
+
+test("agent release keeps the host owner captured on press", async () => {
+  const controller = new DeckController();
+  const remoteHost: CodexHost = {
+    hostId: "22222222-2222-4222-8222-222222222222", hostName: "Remote A", platform: "darwin"
+  };
+  const assignment = {
+    ...snapshot.slots[0]!, host: remoteHost, sourceSlot: 0, observedAt: Date.now()
+  };
+  const sends: Array<[unknown, string | undefined]> = [];
+  const internal = controller as unknown as {
+    localHost?: CodexHost;
+    routedSlots: typeof assignment[];
+    relayClient?: { send: (command: unknown, expectedHostId?: string) => Promise<void> };
+    refresh: () => Promise<void>;
+  };
+  internal.localHost = {
+    hostId: "33333333-3333-4333-8333-333333333333", hostName: "Local", platform: "win32"
+  };
+  internal.routedSlots = [assignment];
+  internal.relayClient = {
+    send: async (command, expectedHostId) => { sends.push([command, expectedHostId]); }
+  };
+  internal.refresh = async () => {};
+
+  await controller.sendAgent(0, 1);
+  internal.routedSlots = [{
+    ...assignment,
+    host: { ...remoteHost, hostId: "44444444-4444-4444-8444-444444444444", hostName: "Remote B" }
+  }];
+  await controller.sendAgent(0, 0);
+
+  assert.deepEqual(sends.map(([command, expectedHostId]) => [
+    (command as { act: number }).act, expectedHostId
+  ]), [[1, remoteHost.hostId], [0, remoteHost.hostId]]);
 });
 
 async function freePort(): Promise<number> {

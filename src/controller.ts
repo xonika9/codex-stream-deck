@@ -296,7 +296,10 @@ export class DeckController {
     if (!assignment.threadKey) throw new Error("The selected Codex task has no stable thread identity.");
     if (assignment.host.hostId === this.localHost?.hostId) {
       await this.microBridge.sendAgent(assignment.sourceSlot, act, assignment.threadKey);
-    } else await this.sendRemote({ kind: "agent", slot: assignment.sourceSlot, threadKey: assignment.threadKey, act });
+    } else await this.sendRemote(
+      { kind: "agent", slot: assignment.sourceSlot, threadKey: assignment.threadKey, act },
+      assignment.host.hostId
+    );
     if (act === 0) void this.refresh();
   }
 
@@ -533,9 +536,9 @@ export class DeckController {
     return this.localHost != null && this.targetPlatform !== this.localHost.platform;
   }
 
-  private async sendRemote(command: RelayCommand): Promise<void> {
+  private async sendRemote(command: RelayCommand, expectedHostId?: string): Promise<void> {
     if (!this.relayClient) throw new Error("Remote Codex relay is not configured.");
-    await this.relayClient.send(command);
+    await this.relayClient.send(command, expectedHostId);
   }
 
   private async sendToTarget(command: RelayCommand, local: () => Promise<void>): Promise<void> {
