@@ -3,7 +3,7 @@ import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import "./generate-plugin-icons.mjs";
 
-const output = resolve("dist/com.simeo.codex-deck.sdPlugin");
+const output = resolve("dist/com.xonika9.codex-deck.sdPlugin");
 // Keep the package root itself because Windows may have a directory handle open
 // while Stream Deck is installed. Clearing every child still prevents stale
 // files from another OS (notably Finder AppleDouble `._*` entries) leaking into

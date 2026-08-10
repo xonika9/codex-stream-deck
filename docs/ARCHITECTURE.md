@@ -158,9 +158,11 @@ CDP provides privileged access to the Codex renderer. Binding to `127.0.0.1` pre
 
 ## Data flow
 
-In single-host mode Codex Deck has no server, API key, analytics endpoint, or
-update service. Runtime data stays between Stream Deck, the local plugin
-process, and the local Codex renderer. Optional multi-host mode adds one
+In desktop-only single-host mode Codex Deck has no server, API key, analytics
+endpoint, or update service. Runtime data stays between Stream Deck, the local
+plugin process, and the local Codex renderer. Optional iPhone Nearby pairing
+adds only the authenticated pinned-TLS relay on one explicit private LAN
+address; Chrome DevTools remains on loopback. Optional multi-host mode adds one
 user-configured Mac listener reachable through SSH or inside the encrypted
 tailnet; titles, task IDs, states, a bounded catalog of recent local task UUIDs
 and modification times, ownership metadata, and typed commands pass between the

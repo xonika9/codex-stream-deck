@@ -30,13 +30,17 @@ section below.
 
 ## Download the source
 
-For a released build, either download **Source code (zip)** from that GitHub
-release and extract it, or clone the matching tag in Terminal:
+For the current development source, clone the repository's `main` branch in
+Terminal:
 
 ```zsh
-git clone --branch v0.7.0.2 --depth 1 https://github.com/dazer1234/codex-stream-deck.git
+git clone --depth 1 https://github.com/xonika9/codex-stream-deck.git
 cd codex-stream-deck
 ```
+
+After xonika9 publishes a release, you can instead download its **Source code
+(zip)** archive and extract it. This keeps the source aligned with that release
+without baking a version-specific tag into these instructions.
 
 Do not download an unrelated launcher ZIP for the Xcode project. The iPhone
 source lives in the repository's `ios` directory.

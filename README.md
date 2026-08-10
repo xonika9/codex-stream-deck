@@ -1,6 +1,16 @@
+<p align="center">
+  Language: <strong>English</strong> · <a href="README.ru.md">Русский</a>
+</p>
+
 # Codex Deck
 
+[![CI workflow status](https://github.com/xonika9/codex-stream-deck/actions/workflows/ci.yml/badge.svg)](https://github.com/xonika9/codex-stream-deck/actions/workflows/ci.yml)
+
 Codex Deck brings the Codex Micro control model to an Elgato Stream Deck. It mirrors Codex's six native agent slots and sends Codex's own Micro events for actions, joystick directions, encoder clicks, reasoning effort, and official keycap commands. It does not type text or depend on global hotkeys.
+
+This repository is a fork and continuation of [dazer1234/codex-stream-deck](https://github.com/dazer1234/codex-stream-deck). Current development and releases are maintained by [xonika9](https://github.com/xonika9).
+
+> I share field notes on AI models and developer tools in [Контролируемые галлюцинации](https://t.me/+DOZWlhI4r4EyYjgy), a Russian-language Telegram channel.
 
 > [!IMPORTANT]
 > This is an independent community project. It is not made, supported, or endorsed by OpenAI or Elgato. It uses undocumented Codex desktop internals and may need an update after a Codex release.
@@ -18,24 +28,7 @@ The same Stream Deck plugin package works in all three modes. Install only the l
 | Windows + Mac | Windows | Both apps; six agents are merged | [Multi-host setup](docs/MULTI_HOST.md) |
 | iPhone companion | iOS 17+ | Private Mac and/or Windows nodes | [iPhone app](docs/IOS.md) · [Install from source](docs/IOS_INSTALL.md) |
 
-Windows-only and Mac-only mode have no relay, no second computer dependency, and no host badges. Multi-host mode is optional and can be disabled without changing the local bridge on either machine.
-
-## Features
-
-- Six dynamic agent keys using the source and assignments selected in **Codex Settings > Codex Micro**.
-- Live idle, working, unread completion, approval/input, error, and empty states.
-- Codex-aligned light and dark rendering with restrained status animation.
-- Native key-down/key-up handling for Micro slots `ACT06` through `ACT12`.
-- Native joystick up, right, down, left, and encoder click.
-- Dedicated reasoning-effort up/down buttons with press-and-hold repeat.
-- Live usage controls: a configurable circular 5-hour/weekly limit key and a two-window overview.
-- A centered reset-credit counter with a deliberate 1.2-second hold before an applicable credit can be consumed.
-- A local `codex://threads/new` action for a new task.
-- Standalone actions for all official single-size keycaps, resolved from the installed Codex build at runtime.
-- Optional local loading of official keycap SVGs; those protected files are never included in this repository or its releases.
-- Optional authenticated SSH/Tailscale relay for one Stream Deck controlling Windows and Mac Codex together.
-- Per-host health on the Windows/Mac target key, with last-known agent tiles visibly marked when native desktop signals are uncertain or the relay is offline.
-- Native SwiftUI iPhone companion with dual-host agents, usage, reset credits, and authenticated Micro controls over pinned-TLS Nearby Wi-Fi or private Tailscale HTTPS.
+Desktop-only Windows and Mac modes need no relay, second computer, or host badges. Enabling the iPhone companion adds its authenticated pinned-TLS relay; multi-host desktop mode remains optional and can be disabled without changing the local bridge on either machine.
 
 ## Requirements
 
@@ -49,7 +42,10 @@ Other Stream Deck models may work, but the included layout and physical-device t
 
 ## Quick install
 
-1. Download `com.simeo.codex-deck.streamDeckPlugin` from the matching [GitHub release](https://github.com/dazer1234/codex-stream-deck/releases/latest) and open it on the computer running Stream Deck.
+> [!NOTE]
+> This fork does not have a published binary release yet. The instructions below describe the release installation path that will become available on the [releases page](https://github.com/xonika9/codex-stream-deck/releases); contributors can build the current source with the commands in [Build and release validation](#build-and-release-validation).
+
+1. Download `com.xonika9.codex-deck.streamDeckPlugin` from the matching xonika9 release and open it on the computer running Stream Deck.
 2. Download only the launcher for that computer:
    - Windows: `codex-deck-launcher-windows-vX.Y.Z.zip`
    - macOS: `codex-deck-launcher-macos-vX.Y.Z.zip`
@@ -67,6 +63,26 @@ the [beginner installation guide](docs/IOS_INSTALL.md) and the
 [local Wi-Fi test](docs/IOS_LOCAL_WIFI.md).
 
 In Windows + Mac mode, choose the same agent-source mode in both Codex apps when you want both native Pinned lists or both sets of Individual assignments to contribute. Pinned tasks are interleaved fairly. For Individual assignments, the Stream Deck computer wins when both apps assign different tasks to one button, while the other computer fills empty slots. Mirrored copies of the same task are shown only once. See [Multi-host behavior](docs/MULTI_HOST.md#agent-source-modes).
+
+> [!WARNING]
+> The xonika9 fork uses the new plugin UUID `com.xonika9.codex-deck`. Stream Deck treats it as a different plugin from upstream `com.simeo.codex-deck`: existing actions, per-action settings, and global plugin settings are not migrated automatically. Save or export your profiles, install only one variant at a time, rebuild both pages with the new actions, and then remove the old plugin. Local Codex Deck host, relay, and icon data remain in the existing platform data directory; the macOS watcher intentionally keeps its established `com.simeo.codex-deck.watcher` service label.
+
+## Features
+
+- Six dynamic agent keys using the source and assignments selected in **Codex Settings > Codex Micro**.
+- Live idle, working, unread completion, approval/input, error, and empty states.
+- Codex-aligned light and dark rendering with restrained status animation.
+- Native key-down/key-up handling for Micro slots `ACT06` through `ACT12`.
+- Native joystick up, right, down, left, and encoder click.
+- Dedicated reasoning-effort up/down buttons with press-and-hold repeat.
+- Live usage controls: a configurable circular 5-hour/weekly limit key and a two-window overview.
+- A centered reset-credit counter with a deliberate 1.2-second hold before an applicable credit can be consumed.
+- A local `codex://threads/new` action for a new task.
+- Standalone actions for all official single-size keycaps, resolved from the installed Codex build at runtime.
+- Optional local loading of official keycap SVGs; those protected files are never included in this repository or its releases.
+- Optional authenticated SSH/Tailscale relay for one Stream Deck controlling Windows and Mac Codex together.
+- Per-host health on the Windows/Mac target key, with last-known agent tiles visibly marked when native desktop signals are uncertain or the relay is offline.
+- Native SwiftUI iPhone companion with dual-host agents, usage, reset credits, and authenticated Micro controls over pinned-TLS Nearby Wi-Fi or private Tailscale HTTPS.
 
 ## Recommended 15-key layout
 
@@ -149,17 +165,9 @@ Do not use the launcher while running untrusted local software. See [SECURITY.md
 
 ## Compatibility
 
-The current build was locally validated against:
+Compatibility is versioned with each release because Codex Deck depends on undocumented Codex desktop internals. After the first xonika9 release, consult the notes and validation evidence on the [releases page](https://github.com/xonika9/codex-stream-deck/releases) for the tested combinations.
 
-- Codex for Windows `26.715.8383.0`
-- Codex for macOS `26.715.70719` (`5650`)
-- Stream Deck `7.4.2.22730`
-- Windows `10.0.26220.0`
-- Node.js `24.13.0`
-- iPhone `iOS 27.0` (physical-device build and tests)
-- Standard 15-key Stream Deck MK.2
-
-The Windows physical-device path and the Windows+Mac relay were exercised on the real setup. The macOS launcher, watcher, native bridge, and plugin package are validated; a Stream Deck physically attached to the Mac has not yet been hardware-tested. These are tested versions, not strict maximums.
+The last upstream validation covered the Windows physical-device path and the Windows + Mac relay on a real setup. It also covered the macOS launcher, watcher, native bridge, and plugin package, but not a Stream Deck physically attached to the Mac. Treat those results as historical validation evidence, not as strict minimums, maximums, or a guarantee for later Codex builds.
 
 ## Troubleshooting
 
@@ -179,8 +187,8 @@ npm run audit:release
 `npm run release:prepare` creates a versioned local release-candidate directory with the plugin package, Windows launcher ZIP, and SHA-256 checksums. The macOS ZIP must be created on macOS with `scripts/package-macos-release.sh` so executable bits survive; pass that ZIP to `scripts/prepare-release.ps1 -MacArchivePath ...`.
 
 For a four-component Stream Deck hotfix version, set
-`CODEX_DECK_RELEASE_VERSION=0.7.0.2` while running the macOS packager and pass
-`-ReleaseVersion 0.7.0.2` to `prepare-release.ps1`. The npm package keeps its
+`CODEX_DECK_RELEASE_VERSION=X.Y.Z.W` while running the macOS packager and pass
+`-ReleaseVersion X.Y.Z.W` to `prepare-release.ps1`. The npm package keeps its
 SemVer-compatible prerelease form.
 
 Nothing is published automatically. See [CONTRIBUTING.md](CONTRIBUTING.md).

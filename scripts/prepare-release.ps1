@@ -38,7 +38,7 @@ try {
 
   Remove-Item -LiteralPath $output -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $output | Out-Null
-  Copy-Item -LiteralPath (Join-Path $root 'com.simeo.codex-deck.streamDeckPlugin') -Destination $output
+  Copy-Item -LiteralPath (Join-Path $root 'com.xonika9.codex-deck.streamDeckPlugin') -Destination $output
   Compress-Archive -Path (Join-Path $root 'release\codex-deck-launcher') -DestinationPath (Join-Path $output "codex-deck-launcher-windows-v$version.zip") -CompressionLevel Optimal
   if (-not [string]::IsNullOrWhiteSpace($MacArchivePath)) {
     if (-not (Test-Path -LiteralPath $MacArchivePath -PathType Leaf)) { throw "Mac archive not found: $MacArchivePath" }

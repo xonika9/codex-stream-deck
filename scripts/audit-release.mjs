@@ -3,7 +3,7 @@ import { basename, extname, resolve } from "node:path";
 
 const roots = process.argv.slice(2).length
   ? process.argv.slice(2).map((path) => resolve(path))
-  : [resolve("dist/com.simeo.codex-deck.sdPlugin"), resolve("release/codex-deck-launcher"), resolve("release/codex-deck-launcher-macos")];
+  : [resolve("dist/com.xonika9.codex-deck.sdPlugin"), resolve("release/codex-deck-launcher"), resolve("release/codex-deck-launcher-macos")];
 
 const forbiddenFiles = new Set([
   "codex-micro-bridge.json", "control-target.json", "host.json", "relay-client.json", "relay-server.json",

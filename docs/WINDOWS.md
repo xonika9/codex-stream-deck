@@ -27,7 +27,7 @@ Tailscale remote access remains available as a separate profile; see
 
 ## Install
 
-1. Install `com.simeo.codex-deck.streamDeckPlugin` by opening it.
+1. Install `com.xonika9.codex-deck.streamDeckPlugin` by opening it.
 2. Extract `codex-deck-launcher-windows-vX.Y.Z.zip` to a normal folder.
 3. Install Node.js 20 or newer if `node --version` is unavailable.
 4. Inspect the current state without changing Codex:

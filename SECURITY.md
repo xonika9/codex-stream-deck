@@ -2,16 +2,21 @@
 
 ## Supported versions
 
-Only the latest GitHub release is supported.
+Until the first xonika9 release is published, security fixes target the current
+`main` branch. After that, only the latest GitHub release is supported.
 
 ## Reporting
 
-Do not publish a working exploit, authentication data, Codex databases, rollout files, or local official SVG assets in a public issue. Open a minimal issue asking for a private contact channel and include only the affected Codex Deck version and a non-sensitive summary.
+Report vulnerabilities through GitHub's private vulnerability reporting for
+`xonika9/codex-stream-deck`:
+<https://github.com/xonika9/codex-stream-deck/security/advisories/new>.
+Do not publish a working exploit, authentication data, Codex databases, rollout
+files, or local official SVG assets in a public issue.
 
 ## Important boundary
 
 Codex Deck starts Codex with a Chrome DevTools endpoint bound to `127.0.0.1`. This is intentionally local but remains accessible to processes running as the same Windows or macOS user. Do not expose, forward, or rebind that port to a network interface.
 
-The optional multi-host relay is a separate authenticated, typed protocol. Use only its loopback SSH tunnel or an explicit Tailscale address. Never forward CDP, use wildcard/public listeners, commit relay state, or share pairing tokens in commands, issues, logs, or screenshots.
+The optional multi-host relay is a separate authenticated, typed protocol. Use only its loopback SSH tunnel or an explicit Tailscale address. Nearby iPhone pairing exposes only that authenticated relay over pinned TLS on one explicit RFC 1918 LAN address; it never exposes the Chrome DevTools endpoint. Never forward CDP, use wildcard/public listeners, commit relay state, or share pairing tokens in commands, issues, logs, or screenshots.
 
 Release artifacts are audited for private runtime state, known personal setup markers, and protected Codex keycap SVG files. This reduces accidental packaging risk but does not replace review.

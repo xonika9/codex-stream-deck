@@ -122,9 +122,9 @@ test("reasoning controls use the official native encoder rotation events", async
 test("manifest exposes both dedicated reasoning adjustment buttons", async () => {
   const manifest = JSON.parse(await readFile(new URL("../static/manifest.json", import.meta.url), "utf8")) as { Actions: Array<{ UUID: string }>; OS: Array<{ Platform: string }> };
   const actions = new Set(manifest.Actions.map((action) => action.UUID));
-  assert.equal(actions.has("com.simeo.codex-deck.reasoning-down"), true);
-  assert.equal(actions.has("com.simeo.codex-deck.reasoning-up"), true);
-  assert.equal(actions.has("com.simeo.codex-deck.host-toggle"), true);
+  assert.equal(actions.has("com.xonika9.codex-deck.reasoning-down"), true);
+  assert.equal(actions.has("com.xonika9.codex-deck.reasoning-up"), true);
+  assert.equal(actions.has("com.xonika9.codex-deck.host-toggle"), true);
   assert.deepEqual(manifest.OS.map(({ Platform }) => Platform).sort(), ["mac", "windows"]);
 });
 
@@ -132,11 +132,11 @@ test("all official keycaps are covered by standalone or native actions", async (
   const manifest = JSON.parse(await readFile(new URL("../static/manifest.json", import.meta.url), "utf8")) as { Actions: Array<{ UUID: string }> };
   const actions = new Set(manifest.Actions.map((action) => action.UUID));
   for (const keycap of ADDITIONAL_KEYCAPS) {
-    assert.equal(actions.has(`com.simeo.codex-deck.keycap-${keycap.slug}`), true, `missing ${keycap.id}`);
+    assert.equal(actions.has(`com.xonika9.codex-deck.keycap-${keycap.slug}`), true, `missing ${keycap.id}`);
   }
   assert.equal(OFFICIAL_KEYCAP_IDS.length, 30);
   assert.equal(new Set(ADDITIONAL_KEYCAPS.map((keycap) => keycap.id)).size, 29);
-  assert.equal(actions.has("com.simeo.codex-deck.dictation"), true, "MIC uses the native press/release action");
+  assert.equal(actions.has("com.xonika9.codex-deck.dictation"), true, "MIC uses the native press/release action");
 });
 
 test("standalone keycaps resolve Codex's live registry instead of hardcoding commands", async () => {

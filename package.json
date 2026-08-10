@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Unofficial Codex Micro bridge for Stream Deck on Windows and macOS, with optional multi-host relay",
   "license": "MIT",
-  "author": "Dazer",
+  "author": "xonika9",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dazer1234/codex-stream-deck.git"
+    "url": "https://github.com/xonika9/codex-stream-deck.git"
   },
   "engines": {
     "node": ">=20"
@@ -21,8 +21,8 @@
     "audit:release": "node scripts/audit-release.mjs",
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "validate": "npm run build && streamdeck validate dist/com.simeo.codex-deck.sdPlugin",
-    "pack": "npm run build && streamdeck pack dist/com.simeo.codex-deck.sdPlugin --force",
+    "validate": "npm run build && streamdeck validate dist/com.xonika9.codex-deck.sdPlugin",
+    "pack": "npm run build && streamdeck pack dist/com.xonika9.codex-deck.sdPlugin --force",
     "release:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release.ps1"
   },
   "dependencies": {

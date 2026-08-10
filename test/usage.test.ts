@@ -107,9 +107,9 @@ test("usage actions and property inspector are packaged without official keycap 
   ]);
   const manifest = JSON.parse(manifestSource) as { Actions: Array<{ UUID: string; PropertyInspectorPath?: string }> };
   const actions = new Map(manifest.Actions.map((action) => [action.UUID, action]));
-  assert.equal(actions.get("com.simeo.codex-deck.usage-limit")?.PropertyInspectorPath, "static/property-inspector/usage-limit.html");
-  assert.equal(actions.has("com.simeo.codex-deck.usage-overview"), true);
-  assert.equal(actions.has("com.simeo.codex-deck.rate-limit-reset"), true);
+  assert.equal(actions.get("com.xonika9.codex-deck.usage-limit")?.PropertyInspectorPath, "static/property-inspector/usage-limit.html");
+  assert.equal(actions.has("com.xonika9.codex-deck.usage-overview"), true);
+  assert.equal(actions.has("com.xonika9.codex-deck.rate-limit-reset"), true);
   assert.match(inspector, /value="auto"/);
   assert.match(inspector, /value="five-hour"/);
   assert.match(inspector, /value="weekly"/);

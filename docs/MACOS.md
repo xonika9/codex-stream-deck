@@ -25,7 +25,7 @@ Tailscale remote access remains a separate optional profile; see
 
 ## Install
 
-1. Install `com.simeo.codex-deck.streamDeckPlugin` in Stream Deck for macOS.
+1. Install `com.xonika9.codex-deck.streamDeckPlugin` in Stream Deck for macOS.
 2. Extract `codex-deck-launcher-macos-vX.Y.Z.zip`. The official release ZIP is created on macOS so its executable bits are preserved.
 3. Install Node.js 20 or newer if `node --version` is unavailable.
 4. From Terminal in the extracted launcher directory, run:
