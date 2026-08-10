@@ -56,11 +56,22 @@ export function renderAgentSvg(slot: number, title: string, status: AgentVisualS
   const glowOpacity = Math.min(1, (status === "empty" ? .12 : status === "idle" ? .18 : status === "thinking" ? .50 + pulse * .16 : status === "input" ? .42 + pulse * .12 : .52) + themeBoost);
   const surfaceOpacity = (status === "empty" ? .04 : status === "idle" ? .06 : status === "thinking" ? .30 + pulse * .12 : status === "input" ? .24 + pulse * .08 : .28) + (theme === "dark" && status !== "empty" ? .06 : 0);
   const statusMark = hostHealth === "ready" ? renderAgentStatusMark(status, glowColor, statusPhase, pulse, theme) : "";
-  const titleMarkup = line3
-    ? `<text x="72" y="62" text-anchor="middle" font-size="${fitTitleFont(line1, 24, 17)}" font-weight="650" letter-spacing=".03" fill="${surface.title}">${escapeXml(line1)}</text><text x="72" y="91" text-anchor="middle" font-size="${fitTitleFont(line2, 24, 17)}" font-weight="650" letter-spacing=".03" fill="${surface.title}">${escapeXml(line2)}</text><text x="72" y="120" text-anchor="middle" font-size="${fitTitleFont(line3, 24, 17)}" font-weight="650" letter-spacing=".03" fill="${surface.title}">${escapeXml(line3)}</text>`
-    : line2
-      ? `<text x="72" y="73" text-anchor="middle" font-size="${fitTitleFont(line1, 26, 17)}" font-weight="650" letter-spacing=".04" fill="${surface.title}">${escapeXml(line1)}</text><text x="72" y="107" text-anchor="middle" font-size="${fitTitleFont(line2, 26, 17)}" font-weight="650" letter-spacing=".04" fill="${surface.title}">${escapeXml(line2)}</text>`
-      : `<text x="72" y="90" text-anchor="middle" font-size="${fitTitleFont(line1, 27)}" font-weight="650" letter-spacing=".04" fill="${surface.title}">${escapeXml(line1)}</text>`;
+  let titleLayout: Array<{ value: string; y: number; maximum: number; minimum?: number; letterSpacing: string }>;
+  if (line3) {
+    titleLayout = [line1, line2, line3].map((value, index) => ({
+      value, y: 62 + index * 29, maximum: 24, minimum: 17, letterSpacing: ".03"
+    }));
+  } else if (line2) {
+    titleLayout = [
+      { value: line1, y: 73, maximum: 26, minimum: 17, letterSpacing: ".04" },
+      { value: line2, y: 107, maximum: 26, minimum: 17, letterSpacing: ".04" }
+    ];
+  } else {
+    titleLayout = [{ value: line1, y: 90, maximum: 27, letterSpacing: ".04" }];
+  }
+  const titleMarkup = titleLayout.map(({ value, y, maximum, minimum, letterSpacing }) =>
+    `<text x="72" y="${y}" text-anchor="middle" font-size="${fitTitleFont(value, maximum, minimum)}" font-weight="650" letter-spacing="${letterSpacing}" fill="${surface.title}">${escapeXml(value)}</text>`
+  ).join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
     <defs>
