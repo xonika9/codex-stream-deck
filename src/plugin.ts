@@ -1,5 +1,5 @@
 import streamDeck from "@elgato/streamdeck";
-import { DeckController } from "./controller.js";
+import { DeckController, type AgentDisplaySettings } from "./controller.js";
 import {
   Agent1, Agent2, Agent3, Agent4, Agent5, Agent6,
   Approve, Back, Decline, Dictation, Fast, Fork, Forward, NewTask,
@@ -15,8 +15,8 @@ import {
 
 const controller = new DeckController();
 
-streamDeck.settings.onDidReceiveGlobalSettings<{ showContextRings?: boolean }>((event) => {
-  controller.setContextRingVisibility(event.settings.showContextRings !== false);
+streamDeck.settings.onDidReceiveGlobalSettings<AgentDisplaySettings>((event) => {
+  controller.setAgentDisplaySettings(event.settings);
 });
 
 for (const pluginAction of [

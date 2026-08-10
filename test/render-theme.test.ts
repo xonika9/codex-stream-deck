@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { renderAgentKey, renderAgentSvg, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap, SIGNAL_COLORS } from "../src/render.js";
+import { renderAgentBlackKey, renderAgentBlackSvg, renderAgentKey, renderAgentSvg, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap, SIGNAL_COLORS } from "../src/render.js";
+
+test("healthy empty queue positions use a dedicated solid-black data URI", () => {
+  const svg = renderAgentBlackSvg();
+  assert.equal(svg, '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144"><rect width="144" height="144" fill="#000000"/></svg>');
+  assert.equal(
+    decodeURIComponent(renderAgentBlackKey().replace(/^data:image\/svg\+xml;charset=utf8,/, "")),
+    svg
+  );
+  assert.doesNotMatch(svg, /text|stroke|data-agent|animate|context|host|status/i);
+});
 
 test("dark agent tiles use Codex-like charcoal surfaces without pure black", () => {
   const svg = renderAgentSvg(0, "Building dark mode", "thinking", true, 4, "dark");

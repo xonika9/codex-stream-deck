@@ -45,6 +45,14 @@ export function renderAgentKey(slot: number, title: string, status: AgentVisualS
   return toDataUrl(renderAgentSvg(slot, title, status, selected, phase, theme, hostBadge, hostHealth, contextUsedPercent, showContextRing));
 }
 
+export function renderAgentBlackKey(): string {
+  return toDataUrl(renderAgentBlackSvg());
+}
+
+export function renderAgentBlackSvg(): string {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144"><rect width="144" height="144" fill="#000000"/></svg>';
+}
+
 export function renderAgentSvg(slot: number, title: string, status: AgentVisualStatus, selected = false, phase = 0, theme: ThemeMode = "light", hostBadge?: string, hostHealth: HostHealthState = "ready", contextUsedPercent?: number, showContextRing = true): string {
   const surface = SURFACES[theme];
   const color = SIGNAL_COLORS[theme][status];

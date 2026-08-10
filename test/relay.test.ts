@@ -18,7 +18,7 @@ import {
   HostActivityIndex, RELAY_PROTOCOL_VERSION, normalizeHostSnapshotAtReceipt,
   parseRelayCommand, type HostSnapshot
 } from "../src/relay-protocol.js";
-import type { CodexHost, MicroSnapshot } from "../src/types.js";
+import type { CodexHost, MicroSnapshot, RoutedAgentSlot } from "../src/types.js";
 
 const host: CodexHost = { hostId: "56fd97ad-7073-42cc-85ce-befa17546d7c", hostName: "Test Mac", platform: "darwin" };
 const snapshot: MicroSnapshot = {
@@ -1070,6 +1070,7 @@ test("agent release keeps the host owner captured on press", async () => {
   };
   const sends: Array<[unknown, string | undefined]> = [];
   const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
     localHost?: CodexHost;
     routedSlots: typeof assignment[];
     relayClient?: { send: (command: unknown, expectedHostId?: string) => Promise<void> };
@@ -1078,6 +1079,7 @@ test("agent release keeps the host owner captured on press", async () => {
   internal.localHost = {
     hostId: "33333333-3333-4333-8333-333333333333", hostName: "Local", platform: "win32"
   };
+  internal.activeQueueEnabled = true;
   internal.routedSlots = [assignment];
   internal.relayClient = {
     send: async (command, expectedHostId) => { sends.push([command, expectedHostId]); }
@@ -1087,13 +1089,149 @@ test("agent release keeps the host owner captured on press", async () => {
   await controller.sendAgent(0, 1);
   internal.routedSlots = [{
     ...assignment,
+    sourceSlot: 5,
+    threadKey: "00000000-0000-4000-8000-000000000005",
     host: { ...remoteHost, hostId: "44444444-4444-4444-8444-444444444444", hostName: "Remote B" }
   }];
   await controller.sendAgent(0, 0);
 
   assert.deepEqual(sends.map(([command, expectedHostId]) => [
-    (command as { act: number }).act, expectedHostId
-  ]), [[1, remoteHost.hostId], [0, remoteHost.hostId]]);
+    (command as { act: number; slot: number; threadKey: string }).act,
+    (command as { act: number; slot: number; threadKey: string }).slot,
+    (command as { act: number; slot: number; threadKey: string }).threadKey,
+    expectedHostId
+  ]), [
+    [1, assignment.sourceSlot, assignment.threadKey, remoteHost.hostId],
+    [0, assignment.sourceSlot, assignment.threadKey, remoteHost.hostId]
+  ]);
+});
+
+test("active queue empty press stays a no-op even if the position fills before release", async () => {
+  const controller = new DeckController();
+  const sends: unknown[] = [];
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    routedSlots: RoutedAgentSlot[];
+    pressedAgents: Map<number, unknown>;
+    localHost?: CodexHost;
+    microBridge: { sendAgent: (...args: unknown[]) => Promise<void> };
+  };
+  internal.localHost = host;
+  internal.routedSlots = [];
+  internal.microBridge.sendAgent = async (...args) => { sends.push(args); };
+
+  internal.activeQueueEnabled = false;
+  await assert.rejects(controller.sendAgent(0, 1), /No Codex task is assigned/);
+  internal.activeQueueEnabled = true;
+
+  await controller.sendAgent(0, 1);
+  assert.equal(internal.pressedAgents.size, 0);
+  internal.routedSlots = [{ ...snapshot.slots[0]!, host, sourceSlot: 0, observedAt: Date.now() }];
+  await controller.sendAgent(0, 0);
+
+  assert.deepEqual(sends, []);
+  assert.equal(internal.pressedAgents.size, 0);
+});
+
+test("controller applies the active queue only after host routing and preserves native order by default", async () => {
+  const input = structuredClone(snapshot);
+  input.slots.forEach((slot) => { slot.status = "idle"; slot.selected = false; });
+  input.slots[1]!.status = "working";
+  input.slots[4]!.status = "working";
+  input.slots[1]!.activityAt = 100;
+  input.slots[4]!.activityAt = 200;
+  const controller = new DeckController();
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    localHost?: CodexHost;
+    localSnapshot?: HostSnapshot;
+    localHealth: { state: "ready" };
+    routedSlots: Array<{ sourceSlot: number }>;
+    refreshDisplay: () => Promise<void>;
+  };
+  internal.localHost = host;
+  internal.localSnapshot = { host, snapshot: input, observedAt: Date.now() };
+  internal.localHealth = { state: "ready" };
+
+  internal.activeQueueEnabled = false;
+  await internal.refreshDisplay();
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [0, 1, 2, 3, 4, 5]);
+
+  internal.activeQueueEnabled = true;
+  await internal.refreshDisplay();
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [4, 1]);
+});
+
+test("active queue settings default off and a change immediately reprojects registered agents", async () => {
+  const input = structuredClone(snapshot);
+  input.slots.forEach((slot) => { slot.status = "idle"; slot.selected = false; });
+  input.slots[2]!.status = "working";
+  const controller = new DeckController();
+  const images: string[] = [];
+  const action = {
+    id: "agent-1", setImage: async (image: string) => { images.push(image); }, setTitle: async () => {}
+  };
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    showContextRings: boolean;
+    localHost?: CodexHost;
+    localSnapshot?: HostSnapshot;
+    localHealth: { state: "ready" };
+    routedSlots: Array<{ sourceSlot: number }>;
+    refreshDisplay: () => Promise<void>;
+  };
+  internal.localHost = host;
+  internal.localSnapshot = { host, snapshot: input, observedAt: Date.now() };
+  internal.localHealth = { state: "ready" };
+  await internal.refreshDisplay();
+  controller.registerAgent(0, action as never);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(internal.activeQueueEnabled, false);
+  const futureSettings = { showContextRings: false, futureSetting: "preserved" };
+  controller.setAgentDisplaySettings(futureSettings);
+  assert.equal(internal.activeQueueEnabled, false);
+  assert.equal(internal.showContextRings, false);
+  controller.setAgentDisplaySettings({ ...futureSettings, activeQueueEnabled: true });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [2]);
+  assert.ok(images.length >= 2, "global option change rerenders registered Agent actions");
+});
+
+test("healthy queue gaps render black, diagnostics remain visible, and duplicate images are suppressed", async () => {
+  const controller = new DeckController();
+  const images: string[] = [];
+  const action = {
+    id: "empty-agent", setImage: async (image: string) => { images.push(image); }, setTitle: async () => {}
+  };
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    localHost?: CodexHost;
+    targetHostId?: string;
+    targetPlatform: CodexHost["platform"];
+    localHealth: { state: "ready" | "degraded"; reason?: string };
+    routedSlots: unknown[];
+    renderAgent: (registration: { action: unknown; slot: number }) => Promise<void>;
+  };
+  internal.activeQueueEnabled = true;
+  internal.localHost = host;
+  internal.targetHostId = host.hostId;
+  internal.targetPlatform = host.platform;
+  internal.routedSlots = [];
+  internal.localHealth = { state: "ready" };
+
+  await internal.renderAgent({ action, slot: 0 });
+  await internal.renderAgent({ action, slot: 0 });
+  assert.equal(images.length, 1);
+  assert.match(decodeURIComponent(images[0]!), /fill="#000000"/);
+
+  internal.localHealth = { state: "degraded", reason: "test" };
+  await internal.renderAgent({ action, slot: 0 });
+  assert.equal(images.length, 2);
+  const diagnostic = decodeURIComponent(images[1]!);
+  assert.match(diagnostic, /Signals[\s\S]*uncertain/);
+  assert.match(diagnostic, /data-agent-host-health="degraded"/);
 });
 
 async function freePort(): Promise<number> {

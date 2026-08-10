@@ -214,6 +214,20 @@ test("context rings are optional in both Stream Deck and the native iPhone app",
   assert.match(store, /show-context-rings/);
 });
 
+test("Agent property inspector exposes an informed global active queue opt-in", async () => {
+  const inspector = await readFile(new URL("../static/property-inspector/agent.html", import.meta.url), "utf8");
+  assert.match(inspector, /id="active-queue"[^>]*type="checkbox"/);
+  assert.match(inspector, />Active queue</);
+  assert.match(inspector, /current six/i);
+  assert.match(inspector, /Most recent chats/);
+  assert.match(inspector, /Agent 1[\s\S]*Agent N/);
+  assert.match(inspector, /contiguously/i);
+  assert.match(inspector, /idle chats[^<]*unavailable/i);
+  assert.match(inspector, /pinned[\s\S]*custom[\s\S]*(?:compact|move)/i);
+  assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*activeQueueEnabled:/);
+  assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*showContextRings:/);
+});
+
 test("iPhone agent keys expose animated long-press details without replacing tap activation", async () => {
   const [dashboard, device, detail, widgets, widgetState, store] = await Promise.all([
     readFile(new URL("../ios/CodexDeckMobile/Views/DashboardView.swift", import.meta.url), "utf8"),

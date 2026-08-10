@@ -7,7 +7,8 @@
   <style>
     :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; padding: 14px; color: #d8d8d8; background: #2d2d2d; font-size: 12px; }
-    label { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; cursor: pointer; }
+    label { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer; }
+    label:first-of-type { margin-top: 0; }
     input { width: 17px; height: 17px; margin: 0; accent-color: #1683ff; }
     p { margin: 12px 0 0 100px; color: #a9a9a9; line-height: 1.35; }
   </style>
@@ -18,6 +19,11 @@
     <input id="show-context-rings" type="checkbox" checked>
   </label>
   <p>This global option applies to all six Codex agent keys on this computer.</p>
+  <label>
+    <span>Active queue</span>
+    <input id="active-queue" type="checkbox">
+  </label>
+  <p>Filters only the current six routed tasks. For the clearest results, use Codex <strong>Most recent chats</strong> and place <strong>Agent 1</strong> through <strong>Agent N</strong> contiguously. Idle chats are unavailable while enabled; <strong>pinned</strong> and <strong>custom</strong> positions compact and may move.</p>
   <script>
     let websocket;
     let pluginContext;
@@ -35,11 +41,21 @@
         if (event.event !== "didReceiveGlobalSettings") return;
         globalSettings = event.payload?.settings ?? {};
         document.getElementById("show-context-rings").checked = globalSettings.showContextRings !== false;
+        document.getElementById("active-queue").checked = globalSettings.activeQueueEnabled === true;
       });
     };
 
     document.getElementById("show-context-rings").addEventListener("change", (event) => {
       globalSettings = { ...globalSettings, showContextRings: event.target.checked };
+      if (websocket?.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({
+          event: "setGlobalSettings", context: pluginContext, payload: globalSettings
+        }));
+      }
+    });
+
+    document.getElementById("active-queue").addEventListener("change", (event) => {
+      globalSettings = { ...globalSettings, activeQueueEnabled: event.target.checked };
       if (websocket?.readyState === WebSocket.OPEN) {
         websocket.send(JSON.stringify({
           event: "setGlobalSettings", context: pluginContext, payload: globalSettings

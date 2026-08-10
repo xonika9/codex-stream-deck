@@ -2,6 +2,7 @@ import streamDeck, { type KeyAction } from "@elgato/streamdeck";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { codexDeckStateRoot } from "./codex-deck-paths.js";
+import { projectActiveQueue } from "./active-queue.js";
 import {
   isRemoteControlRequest, readControlTarget, resolveStartupControlTarget, writeControlTarget,
   type HostPlatform as ControlTarget
@@ -13,7 +14,7 @@ import { getOrCreateHostIdentity } from "./host-identity.js";
 import type { OfficialKeycapId } from "./keycaps.js";
 import { HostActivityIndex, type HostSnapshot, type RelayCommand } from "./relay-protocol.js";
 import {
-  renderAgentKey, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap,
+  renderAgentBlackKey, renderAgentKey, renderBuiltinKeycap, renderFallbackKeycap, renderHostTargetKey, renderImportedKeycap,
   renderRateLimitResetKey, renderUsageLimitKey, renderUsageOverviewKey, type BuiltinIconName
 } from "./render.js";
 import { openCodexThread } from "./codex-open.js";
@@ -33,7 +34,10 @@ type AgentRegistration = { action: KeyAction; slot: number };
 type MicroActionRegistration = { action: KeyAction; slot: MicroActionSlot };
 type UsageLimitRegistration = { action: KeyAction; mode: UsageLimitMode };
 type ActionIdentity = { id: string };
-type ContextRingSettings = { showContextRings?: boolean };
+export type AgentDisplaySettings = {
+  showContextRings?: boolean;
+  activeQueueEnabled?: boolean;
+};
 
 const USER_ICON_ROOT = join(codexDeckStateRoot(), "icons");
 const LOCAL_MOBILE_CONFIG = "mobile-local-relay-server.json";
@@ -75,14 +79,16 @@ export class DeckController {
   private lastAgentSourceSignature = "";
   private lastHostHealthSignature = "";
   private showContextRings = true;
+  private activeQueueEnabled = false;
 
   async start(): Promise<void> {
     this.stopped = false;
     try {
-      const settings = await streamDeck.settings.getGlobalSettings<ContextRingSettings>();
+      const settings = await streamDeck.settings.getGlobalSettings<AgentDisplaySettings>();
       this.showContextRings = settings.showContextRings !== false;
+      this.activeQueueEnabled = settings.activeQueueEnabled === true;
     } catch (error) {
-      streamDeck.logger.warn(`Context-ring settings were unavailable; using enabled by default: ${String(error)}`);
+      streamDeck.logger.warn(`Agent display settings were unavailable; using defaults: ${String(error)}`);
     }
     this.localHost = await getOrCreateHostIdentity();
     const persistedTarget = await readControlTarget(undefined, this.localHost.platform);
@@ -189,6 +195,22 @@ export class DeckController {
     void Promise.all([...this.agents.values()].map((registration) => this.renderAgent(registration)));
   }
 
+  setAgentDisplaySettings(settings: AgentDisplaySettings): void {
+    const showContextRings = settings.showContextRings !== false;
+    const activeQueueEnabled = settings.activeQueueEnabled === true;
+    const contextRingsChanged = this.showContextRings !== showContextRings;
+    const activeQueueChanged = this.activeQueueEnabled !== activeQueueEnabled;
+    if (!contextRingsChanged && !activeQueueChanged) return;
+    this.showContextRings = showContextRings;
+    this.activeQueueEnabled = activeQueueEnabled;
+    if (activeQueueChanged) {
+      void this.refreshDisplay().catch((error) =>
+        streamDeck.logger.error(`Agent display settings refresh failed: ${String(error)}`));
+    } else {
+      void Promise.all([...this.agents.values()].map((registration) => this.renderAgent(registration)));
+    }
+  }
+
   registerMicroAction(slot: MicroActionSlot, action: KeyAction): void {
     this.microActions.set(action.id, { action, slot });
     void this.renderMicroAction({ action, slot });
@@ -290,6 +312,7 @@ export class DeckController {
 
   async sendAgent(slot: number, act: 0 | 1): Promise<void> {
     const assignment = act === 0 ? this.pressedAgents.get(slot) : this.routedSlots[slot];
+    if (this.activeQueueEnabled && !assignment) return;
     if (!assignment) throw new Error(`No Codex task is assigned to global agent slot ${slot + 1}.`);
     if (act === 1) this.pressedAgents.set(slot, assignment);
     else this.pressedAgents.delete(slot);
@@ -382,7 +405,8 @@ export class DeckController {
         streamDeck.logger.warn(`Codex agent sources differ (${agentSources.join(" ")}). The Windows controller mode determines the combined list; Pinned and Individual assignments merge only hosts using that mode.`);
       }
     }
-    this.routedSlots = this.activityIndex.merge(inputs, Date.now(), this.localHost?.hostId);
+    const merged = this.activityIndex.merge(inputs, Date.now(), this.localHost?.hostId);
+    this.routedSlots = this.activeQueueEnabled ? projectActiveQueue(merged, inputs) : merged;
 
     const assignments = this.routedSlots.map((slot) => `${slot.id}=${slot.host.platform}:${slot.threadKey ?? "empty"}`).join(" ");
     if (assignments !== this.lastAssignmentSignature) {
@@ -421,6 +445,10 @@ export class DeckController {
   private async renderAgent({ action, slot }: AgentRegistration): Promise<void> {
     const agent = this.routedSlots[slot];
     const health = agent ? this.healthForHost(agent.host) : this.targetHealth();
+    if (this.activeQueueEnabled && !agent && health.state === "ready") {
+      await this.setImage(action, renderAgentBlackKey());
+      return;
+    }
     const unavailableTitle = health.state === "degraded" ? "Signals uncertain"
       : health.state === "offline" ? "Host offline"
         : health.state === "connecting" ? "Connecting" : "Not assigned";
