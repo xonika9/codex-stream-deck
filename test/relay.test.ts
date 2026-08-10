@@ -5,10 +5,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import streamDeck from "@elgato/streamdeck";
 import WebSocket from "ws";
 import { generate } from "selfsigned";
 import { CodexRelayClient, RELAY_SNAPSHOT_STALE_MS, resolveRelayHealth } from "../src/codex-relay-client.js";
 import { DeckController } from "../src/controller.js";
+import { Agent1 } from "../src/actions.js";
 import { isAllowedRelayHost, isPrivateLanHost, privateLanAddresses } from "../src/relay-network.js";
 import {
   CodexRelayServer, readRelayServerConfig, relayDiscoveryTxt,
@@ -1106,13 +1108,15 @@ test("agent release keeps the host owner captured on press", async () => {
   ]);
 });
 
-test("active queue empty press stays a no-op even if the position fills before release", async () => {
+test("active queue empty press stays a no-op across queue disable and a filled release", async () => {
   const controller = new DeckController();
   const sends: unknown[] = [];
+  let alerts = 0;
   const internal = controller as unknown as {
     activeQueueEnabled: boolean;
     routedSlots: RoutedAgentSlot[];
     pressedAgents: Map<number, unknown>;
+    emptyAgentPresses: Set<number>;
     localHost?: CodexHost;
     microBridge: { sendAgent: (...args: unknown[]) => Promise<void> };
   };
@@ -1124,13 +1128,47 @@ test("active queue empty press stays a no-op even if the position fills before r
   await assert.rejects(controller.sendAgent(0, 1), /No Codex task is assigned/);
   internal.activeQueueEnabled = true;
 
+  const action = new Agent1(controller);
+  const event = { action: { showAlert: async () => { alerts += 1; } } };
+  await action.onKeyDown(event as never);
+  assert.equal(internal.pressedAgents.size, 0);
+  assert.equal(internal.emptyAgentPresses.has(0), true);
+  internal.activeQueueEnabled = false;
+  internal.routedSlots = [{ ...snapshot.slots[0]!, host, sourceSlot: 0, observedAt: Date.now() }];
+  await action.onKeyUp(event as never);
+
+  assert.deepEqual(sends, []);
+  assert.equal(alerts, 0);
+  assert.equal(internal.pressedAgents.size, 0);
+  assert.equal(internal.emptyAgentPresses.size, 0);
+});
+
+test("active queue black empty press clears an orphaned captured assignment", async () => {
+  const controller = new DeckController();
+  const sends: unknown[] = [];
+  const orphaned = { ...snapshot.slots[0]!, host, sourceSlot: 0, observedAt: Date.now() };
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    routedSlots: RoutedAgentSlot[];
+    pressedAgents: Map<number, RoutedAgentSlot>;
+    emptyAgentPresses: Set<number>;
+    localHost?: CodexHost;
+    microBridge: { sendAgent: (...args: unknown[]) => Promise<void> };
+  };
+  internal.activeQueueEnabled = true;
+  internal.localHost = host;
+  internal.routedSlots = [];
+  internal.pressedAgents.set(0, orphaned);
+  internal.microBridge.sendAgent = async (...args) => { sends.push(args); };
+
   await controller.sendAgent(0, 1);
   assert.equal(internal.pressedAgents.size, 0);
-  internal.routedSlots = [{ ...snapshot.slots[0]!, host, sourceSlot: 0, observedAt: Date.now() }];
+  assert.equal(internal.emptyAgentPresses.has(0), true);
   await controller.sendAgent(0, 0);
 
   assert.deepEqual(sends, []);
   assert.equal(internal.pressedAgents.size, 0);
+  assert.equal(internal.emptyAgentPresses.size, 0);
 });
 
 test("controller applies the active queue only after host routing and preserves native order by default", async () => {
@@ -1199,7 +1237,30 @@ test("active queue settings default off and a change immediately reprojects regi
   assert.ok(images.length >= 2, "global option change rerenders registered Agent actions");
 });
 
-test("healthy queue gaps render black, diagnostics remain visible, and duplicate images are suppressed", async () => {
+test("controller startup settings load defaults active queue off and restores persisted true", async () => {
+  const settingsApi = streamDeck.settings as unknown as {
+    getGlobalSettings: () => Promise<{ activeQueueEnabled?: boolean }>;
+  };
+  const originalGetGlobalSettings = settingsApi.getGlobalSettings;
+  try {
+    for (const [persisted, expected] of [[{}, false], [{ activeQueueEnabled: true }, true]] as const) {
+      settingsApi.getGlobalSettings = async () => persisted;
+      const controller = new DeckController();
+      const internal = controller as unknown as {
+        activeQueueEnabled: boolean;
+        loadAgentDisplaySettings: () => Promise<void>;
+      };
+
+      await internal.loadAgentDisplaySettings();
+
+      assert.equal(internal.activeQueueEnabled, expected);
+    }
+  } finally {
+    settingsApi.getGlobalSettings = originalGetGlobalSettings;
+  }
+});
+
+test("healthy queue gaps render black, unavailable diagnostics remain distinct, and duplicate images are suppressed", async () => {
   const controller = new DeckController();
   const images: string[] = [];
   const action = {
@@ -1210,7 +1271,7 @@ test("healthy queue gaps render black, diagnostics remain visible, and duplicate
     localHost?: CodexHost;
     targetHostId?: string;
     targetPlatform: CodexHost["platform"];
-    localHealth: { state: "ready" | "degraded"; reason?: string };
+    localHealth: { state: "ready" | "degraded" | "offline" | "connecting"; reason?: string };
     routedSlots: unknown[];
     renderAgent: (registration: { action: unknown; slot: number }) => Promise<void>;
   };
@@ -1226,12 +1287,20 @@ test("healthy queue gaps render black, diagnostics remain visible, and duplicate
   assert.equal(images.length, 1);
   assert.match(decodeURIComponent(images[0]!), /fill="#000000"/);
 
-  internal.localHealth = { state: "degraded", reason: "test" };
-  await internal.renderAgent({ action, slot: 0 });
-  assert.equal(images.length, 2);
-  const diagnostic = decodeURIComponent(images[1]!);
-  assert.match(diagnostic, /Signals[\s\S]*uncertain/);
-  assert.match(diagnostic, /data-agent-host-health="degraded"/);
+  const diagnostics = [
+    { state: "degraded", title: /Signals[\s\S]*uncertain/ },
+    { state: "offline", title: /Host[\s\S]*offline/ },
+    { state: "connecting", title: /Connecting/ }
+  ] as const;
+  for (const diagnosticCase of diagnostics) {
+    internal.localHealth = { state: diagnosticCase.state, reason: "test" };
+    await internal.renderAgent({ action, slot: 0 });
+    const diagnostic = decodeURIComponent(images.at(-1)!);
+    assert.match(diagnostic, diagnosticCase.title);
+    assert.match(diagnostic, new RegExp(`data-agent-host-health="${diagnosticCase.state}"`));
+    assert.doesNotMatch(diagnostic, /fill="#000000"\/>(?:<\/svg>)?$/);
+  }
+  assert.equal(images.length, 4);
 });
 
 async function freePort(): Promise<number> {

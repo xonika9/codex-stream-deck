@@ -216,7 +216,8 @@ test("context rings are optional in both Stream Deck and the native iPhone app",
 
 test("Agent property inspector exposes an informed global active queue opt-in", async () => {
   const inspector = await readFile(new URL("../static/property-inspector/agent.html", import.meta.url), "utf8");
-  assert.match(inspector, /id="active-queue"[^>]*type="checkbox"/);
+  assert.match(inspector, /id="show-context-rings"[^>]*type="checkbox"[^>]*disabled/);
+  assert.match(inspector, /id="active-queue"[^>]*type="checkbox"[^>]*disabled/);
   assert.match(inspector, />Active queue</);
   assert.match(inspector, /current six/i);
   assert.match(inspector, /Most recent chats/);
@@ -226,6 +227,12 @@ test("Agent property inspector exposes an informed global active queue opt-in", 
   assert.match(inspector, /pinned[\s\S]*custom[\s\S]*(?:compact|move)/i);
   assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*activeQueueEnabled:/);
   assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*showContextRings:/);
+  const settingsReceived = inspector.slice(
+    inspector.indexOf('if (event.event !== "didReceiveGlobalSettings") return;'),
+    inspector.indexOf('document.getElementById("show-context-rings").addEventListener'));
+  assert.match(settingsReceived, /globalSettings\s*=\s*event\.payload\?\.settings\s*\?\?\s*\{\}/);
+  assert.match(settingsReceived, /getElementById\("show-context-rings"\)\.disabled\s*=\s*false/);
+  assert.match(settingsReceived, /getElementById\("active-queue"\)\.disabled\s*=\s*false/);
 });
 
 test("iPhone agent keys expose animated long-press details without replacing tap activation", async () => {

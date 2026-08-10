@@ -16,12 +16,12 @@
 <body>
   <label>
     <span>Context ring</span>
-    <input id="show-context-rings" type="checkbox" checked>
+    <input id="show-context-rings" type="checkbox" checked disabled>
   </label>
   <p>This global option applies to all six Codex agent keys on this computer.</p>
   <label>
     <span>Active queue</span>
-    <input id="active-queue" type="checkbox">
+    <input id="active-queue" type="checkbox" disabled>
   </label>
   <p>Filters only the current six routed tasks. For the clearest results, use Codex <strong>Most recent chats</strong> and place <strong>Agent 1</strong> through <strong>Agent N</strong> contiguously. Idle chats are unavailable while enabled; <strong>pinned</strong> and <strong>custom</strong> positions compact and may move.</p>
   <script>
@@ -42,6 +42,8 @@
         globalSettings = event.payload?.settings ?? {};
         document.getElementById("show-context-rings").checked = globalSettings.showContextRings !== false;
         document.getElementById("active-queue").checked = globalSettings.activeQueueEnabled === true;
+        document.getElementById("show-context-rings").disabled = false;
+        document.getElementById("active-queue").disabled = false;
       });
     };
 

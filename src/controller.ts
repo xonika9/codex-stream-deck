@@ -57,6 +57,7 @@ export class DeckController {
   private readonly resetHolds = new Map<string, number>();
   private readonly activityIndex = new HostActivityIndex();
   private readonly pressedAgents = new Map<number, RoutedAgentSlot>();
+  private readonly emptyAgentPresses = new Set<number>();
   private readonly pressedControlTargets = new Map<string, string>();
   private relayClient?: CodexRelayClient;
   private mobileRelayServer?: CodexRelayServer;
@@ -83,13 +84,7 @@ export class DeckController {
 
   async start(): Promise<void> {
     this.stopped = false;
-    try {
-      const settings = await streamDeck.settings.getGlobalSettings<AgentDisplaySettings>();
-      this.showContextRings = settings.showContextRings !== false;
-      this.activeQueueEnabled = settings.activeQueueEnabled === true;
-    } catch (error) {
-      streamDeck.logger.warn(`Agent display settings were unavailable; using defaults: ${String(error)}`);
-    }
+    await this.loadAgentDisplaySettings();
     this.localHost = await getOrCreateHostIdentity();
     const persistedTarget = await readControlTarget(undefined, this.localHost.platform);
     const relayConfig = await readRelayClientConfig();
@@ -168,6 +163,16 @@ export class DeckController {
     await this.refresh();
     this.scheduleRefresh();
     this.scheduleAnimation();
+  }
+
+  private async loadAgentDisplaySettings(): Promise<void> {
+    try {
+      const settings = await streamDeck.settings.getGlobalSettings<AgentDisplaySettings>();
+      this.showContextRings = settings.showContextRings !== false;
+      this.activeQueueEnabled = settings.activeQueueEnabled === true;
+    } catch (error) {
+      streamDeck.logger.warn(`Agent display settings were unavailable; using defaults: ${String(error)}`);
+    }
   }
 
   stop(): void {
@@ -305,7 +310,17 @@ export class DeckController {
   }
 
   async sendAgent(slot: number, act: 0 | 1): Promise<void> {
+    if (act === 0 && this.emptyAgentPresses.delete(slot)) {
+      this.pressedAgents.delete(slot);
+      return;
+    }
     const assignment = act === 0 ? this.pressedAgents.get(slot) : this.routedSlots[slot];
+    if (act === 1 && this.activeQueueEnabled && !assignment) {
+      this.pressedAgents.delete(slot);
+      this.emptyAgentPresses.add(slot);
+      return;
+    }
+    if (act === 1) this.emptyAgentPresses.delete(slot);
     if (this.activeQueueEnabled && !assignment) return;
     if (!assignment) throw new Error(`No Codex task is assigned to global agent slot ${slot + 1}.`);
     if (act === 1) this.pressedAgents.set(slot, assignment);
