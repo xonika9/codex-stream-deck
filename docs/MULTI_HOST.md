@@ -91,6 +91,14 @@ For a true combined Pinned or Individual list, select that mode in both Codex ap
 
 This makes manual mixed layouts possible without another settings application. Assign a synced task directly in the controller Codex app when it is available there. For a Mac-only task that is not selectable on Windows, leave that Windows slot empty and assign the task to the same slot in the Mac Codex Micro settings. Changes are picked up automatically by the next native snapshot.
 
+### Active queue compatibility
+
+The optional **Active queue** setting is applied only after the normal single-host or multi-host list above has been routed, de-duplicated, and assigned to its owning desktop. It therefore filters at most the current six routed candidates; it does not search either Codex app for tasks outside those slots. Host badges, source slots, owner routing, and key-down/key-up identity remain attached when a task moves to a compacted display position. Turning the option off restores the exact agent-source layout described above.
+
+Use Codex **Most recent chats** for the most useful candidate set. Native **Priority chats** can supply six idle slots while hiding a working task outside the six. The queue deliberately hides those idle candidates and cannot recover the omitted work, so all Agent positions can be healthy and black. These black positions are no-op; host `CONNECT`, `DEGRADED`, and `OFFLINE` diagnostics are still shown.
+
+Place logical **Agent 1** through **Agent N** contiguously on a profile with N Agent buttons. While the queue is enabled, attention/errors come first, then completion/unread tasks in FIFO order when activity times are available, then working tasks by recency. Idle chats are unavailable from the Agent buttons. Pinned and Individual/custom modes still choose the upstream candidate set, but their fixed positions are compacted and may move.
+
 ### Ownership and SSH mirrors
 
 Codex's built-in remote-SSH feature can mirror a task into the other renderer. Codex Deck does not confuse that CLI connection with the owning desktop. In multi-host mode it compares exact local rollout **filenames** on both hosts and checks only bounded JSONL tails for structural `task_started`, legacy `agent_reasoning`/`function_call`, and `task_complete` lifecycle events plus the numeric fields in the latest `token_count` record. A renderer `turn_context` alone never marks a completed task as working. Prompt text, responses, project names, and other rollout content are neither parsed nor sent through the relay.

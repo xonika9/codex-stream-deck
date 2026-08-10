@@ -75,6 +75,16 @@ The native handler was unavailable or the action is not valid in the current com
 
 Codex Deck does not choose the six native tasks. Open **Codex Settings > Codex Micro > Agent keys** and select pinned, recently updated, priority, or custom assignments. For combined Pinned or Individual assignments, select the same mode in both Codex apps. Pinned tasks are interleaved between hosts; in Individual mode the Stream Deck computer wins a conflicting slot and the remote host fills empty slots. Both lists are de-duplicated, and mirrored tasks route to the host owning the exact local rollout filename.
 
+If **Active queue** is enabled, those assignments only provide its current set of at most six candidates. The queue hides idle/off tasks, compacts the rest, and can move fixed pinned or custom positions. Disable it to inspect or use the exact native single-host or combined multi-host positions again.
+
+## Active queue is black or misses a working task
+
+- Prefer Codex **Most recent chats**. Native **Priority chats** can expose six idle slots while a working task remains outside those six; Active queue cannot discover the omitted task.
+- In that exact all-idle case, an all-black Agent row is healthy and expected. Black empty positions are no-op, not a bridge failure.
+- Make sure the profile contains logical **Agent 1** through **Agent N** contiguously and in order. Queue positions close up from Agent 1.
+- Idle chats are intentionally unavailable while Active queue is enabled. Turn it off when you need their original assignments.
+- `CONNECT`, `DEGRADED`, or `OFFLINE` tiles are diagnostics and remain visible instead of becoming black. Follow the bridge or relay checks in this guide for those states.
+
 ## Local command icon does not appear
 
 - Verify the file is in `%LOCALAPPDATA%\CodexDeck\icons` on Windows or `~/Library/Application Support/CodexDeck/icons` on macOS.

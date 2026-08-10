@@ -74,6 +74,7 @@ In Windows + Mac mode, choose the same agent-source mode in both Codex apps when
 ## Features
 
 - Six dynamic agent keys using the source and assignments selected in **Codex Settings > Codex Micro**.
+- Optional global **Active queue** for all six Agent actions on one computer; it is off by default.
 - Live idle, working, unread completion, approval/input, error, and empty states.
 - Codex-aligned light and dark rendering with restrained status animation.
 - Native key-down/key-up handling for Micro slots `ACT06` through `ACT12`.
@@ -87,6 +88,14 @@ In Windows + Mac mode, choose the same agent-source mode in both Codex apps when
 - Optional authenticated SSH/Tailscale relay for one Stream Deck controlling Windows and Mac Codex together.
 - Per-host health on the Windows/Mac target key, with last-known agent tiles visibly marked when native desktop signals are uncertain or the relay is offline.
 - Native SwiftUI iPhone companion with dual-host agents, usage, reset credits, and authenticated Micro controls over pinned-TLS Nearby Wi-Fi or private Tailscale HTTPS.
+
+### Active queue
+
+Enable **Active queue** in any Agent action's property inspector to compact relevant tasks into the first Agent keys. The setting applies globally to Agent 1–6 on that computer and defaults to off. It filters only the current set of at most six tasks already routed from Codex: attention and error tasks come first, completion/unread tasks follow in FIFO order when activity times are available, and working tasks follow from newest to oldest. Idle and off tasks are hidden, and the remaining positions close up without gaps.
+
+For the clearest candidate set, select **Most recent chats** in Codex. Codex's native **Priority chats** mode can return six idle slots while an active task sits outside those six; Active queue cannot discover that omitted task, so every healthy Agent key is black in this case. A healthy black position is unassigned and does nothing when pressed. Connecting, degraded, and offline diagnostics remain visible.
+
+On a profile with N Agent buttons, place logical **Agent 1** through **Agent N** next to each other in order. Idle chats cannot be opened from those buttons while the queue is enabled. **Pinned** and **custom** still choose the candidate set, but their fixed physical positions are compacted and may move. Disable Active queue to restore the exact existing single-host or multi-host agent-source layout.
 
 ## Recommended 15-key layout
 

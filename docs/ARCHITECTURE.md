@@ -58,6 +58,34 @@ The same plugin runs on Windows and macOS. It discovers the local loopback port 
 
 The bridge does not emulate a USB HID device and installs no driver.
 
+### Active queue projection
+
+`Active queue` is a plugin display option shared by all six Agent actions on one
+computer. An absent or false setting leaves the current native single-host or
+combined multi-host agent-source result unchanged. When enabled, the controller
+projects only the at most six `RoutedAgentSlot` values already produced by host
+routing, ownership resolution, mirror de-duplication, and health handling. It
+does not introduce an agent source or discover tasks outside that routed set.
+
+The projection drops `idle`, `off`, and unknown states, then compacts candidates
+into display positions zero through five. Attention and error states sort first;
+completion and unread states use oldest available activity first; working states
+use newest available activity first. Stable source-slot, task, and host identity
+break missing-time or equal-time ties. Display positions may therefore change,
+but commands keep the original source slot, thread identity, and owning host.
+`pinned` and `custom` still determine candidates upstream rather than fixing
+physical positions in this view.
+
+A missing projected task renders as a black no-op key while the relevant host is
+healthy. Connecting, degraded, and offline states continue through the normal
+diagnostic rendering path. Completion freshness remains bounded by the existing
+upstream structural-event window and acknowledgement behavior: the projection
+adds no task database, durable queue, or restart persistence.
+
+This display-only projection does not change relay protocol version 1, owner
+routing, the loopback-only CDP endpoint, independent Windows-only or macOS-only
+operation, optional multi-host operation, or the privacy boundaries below.
+
 Usage data remains part of the same typed host snapshot, but usage and reset credits are account-scoped and therefore do not follow the Mac/Windows function-key target. The controller prefers a healthy local account snapshot and falls back to the paired host only when local usage is unavailable. Window identity is derived from the duration returned by Codex rather than from primary/secondary ordering. A missing 5-hour window is represented as unavailable, and Automatic mode falls back to weekly. The bridge refreshes a stale renderer-owned usage query at most once every 15 seconds, so background-window values do not depend on Codex receiving focus.
 
 Reset consumption is the only mutating usage operation. It is a narrow typed relay command and calls Codex's current native reset-credit client only after the Stream Deck key has been held for 1.2 seconds. The bridge verifies both availability and applicability, selects an available plan-supported credit, uses a unique redemption request ID, and then refreshes the renderer query. No credential, raw endpoint access, or arbitrary request surface is exposed to the relay.
