@@ -10,7 +10,7 @@ Codex Deck brings the Codex Micro control model to an Elgato Stream Deck. It mir
 
 This repository is a fork and continuation of [dazer1234/codex-stream-deck](https://github.com/dazer1234/codex-stream-deck). Current development and releases are maintained by [xonika9](https://github.com/xonika9).
 
-> I share field notes on AI models and developer tools in [Контролируемые галлюцинации](https://t.me/+DOZWlhI4r4EyYjgy), a Russian-language Telegram channel.
+> I share field notes on AI models and developer tools in [Controlled hallucinations](https://t.me/+DOZWlhI4r4EyYjgy), a Russian-language Telegram channel.
 
 > [!IMPORTANT]
 > This is an independent community project. It is not made, supported, or endorsed by OpenAI or Elgato. It uses undocumented Codex desktop internals and may need an update after a Codex release.
@@ -21,12 +21,12 @@ This repository is a fork and continuation of [dazer1234/codex-stream-deck](http
 
 The same Stream Deck plugin package works in all three modes. Install only the launcher and configuration needed for your setup.
 
-| Setup | Stream Deck software | Codex controlled | Guide |
-|---|---|---|---|
-| Windows only | Windows | Local Windows Codex | [Windows setup](docs/WINDOWS.md) |
-| Mac only | macOS | Local Mac Codex | [macOS setup](docs/MACOS.md) |
-| Windows + Mac | Windows | Both apps; six agents are merged | [Multi-host setup](docs/MULTI_HOST.md) |
-| iPhone companion | iOS 17+ | Private Mac and/or Windows nodes | [iPhone app](docs/IOS.md) · [Install from source](docs/IOS_INSTALL.md) |
+| Setup            | Stream Deck software | Codex controlled                 | Guide                                                                  |
+| ---------------- | -------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| Windows only     | Windows              | Local Windows Codex              | [Windows setup](docs/WINDOWS.md)                                       |
+| Mac only         | macOS                | Local Mac Codex                  | [macOS setup](docs/MACOS.md)                                           |
+| Windows + Mac    | Windows              | Both apps; six agents are merged | [Multi-host setup](docs/MULTI_HOST.md)                                 |
+| iPhone companion | iOS 17+              | Private Mac and/or Windows nodes | [iPhone app](docs/IOS.md) · [Install from source](docs/IOS_INSTALL.md) |
 
 Desktop-only Windows and Mac modes need no relay, second computer, or host badges. Enabling the iPhone companion adds its authenticated pinned-TLS relay; multi-host desktop mode remains optional and can be disabled without changing the local bridge on either machine.
 
@@ -92,19 +92,19 @@ This is the actual polished two-page layout used for the MK.2. It keeps the six 
 
 ### Page 1 — agents and daily actions
 
-| Agent 1 | Agent 2 | Agent 3 | Agent 4 | Agent 5 |
-|---|---|---|---|---|
-| Agent 6 | Action 1 / Fast | Action 2 / Approve | Action 3 / Reject | Action 4 / Fork |
-| Action 5 / Push-to-talk | Keycap · Browser¹ | Stream Deck: Next Page | Reasoning Encoder Click | New Task |
+| Agent 1                 | Agent 2           | Agent 3                | Agent 4                 | Agent 5         |
+| ----------------------- | ----------------- | ---------------------- | ----------------------- | --------------- |
+| Agent 6                 | Action 1 / Fast   | Action 2 / Approve     | Action 3 / Reject       | Action 4 / Fork |
+| Action 5 / Push-to-talk | Keycap · Browser¹ | Stream Deck: Next Page | Reasoning Encoder Click | New Task        |
 
 The action names describe the default Codex Micro setup. The keys always follow the live `ACT06`, `ACT07`, `ACT08`, `ACT09`, and `ACT10/11` assignments selected in Codex. ¹If you use `ACT12` / Send more often than Browser, put **Action 6 / Send** in that position instead.
 
 ### Page 2 — navigation and reasoning
 
-| Windows / Mac Target + Health² | Empty | Joystick Up / Plan | Reasoning Down | Reasoning Up |
-|---|---|---|---|---|
-| Empty | Joystick Left / Back | Stream Deck: Previous Page | Joystick Right / Forward | Reasoning Encoder Click |
-| Stream Deck: Switch Profile³ | Empty | Joystick Down / Sidebar | Empty | New Task |
+| Windows / Mac Target + Health² | Empty                | Joystick Up / Plan         | Reasoning Down           | Reasoning Up            |
+| ------------------------------ | -------------------- | -------------------------- | ------------------------ | ----------------------- |
+| Empty                          | Joystick Left / Back | Stream Deck: Previous Page | Joystick Right / Forward | Reasoning Encoder Click |
+| Stream Deck: Switch Profile³   | Empty                | Joystick Down / Sidebar    | Empty                    | New Task                |
 
 ²Use the target key only in Windows + Mac mode. In a single-computer setup, leave it empty or replace it with another keycap action. ³Configure Stream Deck's built-in **Switch Profile** action to return to your own standard profile; no user-specific profile ID is distributed.
 
