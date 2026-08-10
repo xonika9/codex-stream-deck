@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Stream Deck is blank or page changes take several seconds
+
+Check the USB connection before changing the plugin. A flaky hub, port, cable,
+or connection can leave old page images on the device and can also prevent the
+keys from lighting up at all.
+
+1. Disconnect and reconnect the Stream Deck.
+2. Try another port on the Mac.
+3. As a diagnostic check, connect the Stream Deck directly to the Mac once.
+4. After the device lights normally, repeat the same page switch with the
+   plugin enabled and disabled.
+
+A hub is not automatically unsupported for development: keep using it when the
+device starts reliably and page changes are immediate. USB-C Power Delivery
+charging the Mac through the hub does not by itself prove that the hub's
+downstream USB data and peripheral power path is stable. If the delay also
+reproduces over a direct connection, continue with plugin diagnostics.
+
 ## Codex Micro is missing from Settings on Windows
 
 - You can safely run the launcher again while a launcher-started Codex session is open; it now reuses the existing debug session instead of restarting Codex.
