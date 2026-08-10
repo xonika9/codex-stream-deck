@@ -1,4 +1,4 @@
-import type { HostSnapshot } from "./relay-protocol.js";
+import { threadIdentity, validTimestamp, type HostSnapshot } from "./relay-protocol.js";
 import type { RoutedAgentSlot } from "./types.js";
 
 type QueueCandidate = {
@@ -81,13 +81,4 @@ function newestMatchingSessionActivity(
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function validTimestamp(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function threadIdentity(value: string): string {
-  return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)?.[0]?.toLowerCase() ??
-    value.toLowerCase();
 }

@@ -306,7 +306,7 @@ function finitePercent(value: unknown): boolean {
 function integerIn(value: unknown, minimum: number, maximum: number): value is number {
   return Number.isInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
-function validTimestamp(value: unknown): number | null {
+export function validTimestamp(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
@@ -447,7 +447,7 @@ function isThreadKey(value: unknown): value is string {
   return typeof value === "string" && /^(?:[a-z][a-z0-9_-]{0,31}:){0,3}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-function threadIdentity(value: string): string {
+export function threadIdentity(value: string): string {
   return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)?.[0]?.toLowerCase() ?? value;
 }
 

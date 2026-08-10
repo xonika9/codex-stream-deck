@@ -189,12 +189,6 @@ export class DeckController {
     this.unregister(action, this.agents);
   }
 
-  setContextRingVisibility(visible: boolean): void {
-    if (this.showContextRings === visible) return;
-    this.showContextRings = visible;
-    void Promise.all([...this.agents.values()].map((registration) => this.renderAgent(registration)));
-  }
-
   setAgentDisplaySettings(settings: AgentDisplaySettings): void {
     const showContextRings = settings.showContextRings !== false;
     const activeQueueEnabled = settings.activeQueueEnabled === true;
