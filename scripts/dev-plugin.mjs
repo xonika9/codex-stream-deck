@@ -1,6 +1,7 @@
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { relative, resolve } from "node:path";
 
 const PLUGIN_UUID = "com.xonika9.codex-deck";
 const WATCH_ROOTS = ["src", "static"];
@@ -17,6 +18,15 @@ const streamDeckCli = resolve(
 let building = false;
 let queued = false;
 let debounce;
+
+export function normalizeWatchEventPath(root, filename, cwd = process.cwd()) {
+  const normalizedFilename = filename ? String(filename).replaceAll("\\", "/") : "";
+  return relative(cwd, resolve(cwd, root, normalizedFilename)).replaceAll("\\", "/");
+}
+
+export function shouldRebuildWatchEvent(root, filename, cwd = process.cwd()) {
+  return !GENERATED_FILES.has(normalizeWatchEventPath(root, filename, cwd));
+}
 
 function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
@@ -56,7 +66,6 @@ async function rebuild(reason) {
 }
 
 function scheduleRebuild(filename) {
-  if (GENERATED_FILES.has(filename)) return;
   clearTimeout(debounce);
   debounce = setTimeout(() => {
     void rebuild(filename || "file change");
@@ -72,12 +81,19 @@ function stop() {
   process.exit(0);
 }
 
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+async function main() {
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
 
-await rebuild("initial build");
-for (const root of WATCH_ROOTS) {
-  watchers.push(watch(root, { recursive: true }, (_event, filename) => {
-    scheduleRebuild(filename ? `${root}/${filename}` : root);
-  }));
+  await rebuild("initial build");
+  for (const root of WATCH_ROOTS) {
+    watchers.push(watch(root, { recursive: true }, (_event, filename) => {
+      if (!shouldRebuildWatchEvent(root, filename)) return;
+      scheduleRebuild(normalizeWatchEventPath(root, filename));
+    }));
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
 }

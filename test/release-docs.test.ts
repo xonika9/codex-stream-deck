@@ -51,3 +51,11 @@ test("release checksums use portable LF line endings on Windows", async () => {
   assert.match(source, /WriteAllText/);
   assert.doesNotMatch(source, /WriteAllLines/);
 });
+
+test("release preparation audits the completed release directory", async () => {
+  const source = await text("scripts/prepare-release.ps1");
+  const checksum = source.indexOf("SHA256SUMS.txt");
+  const audit = source.indexOf("node scripts/audit-release.mjs $output");
+  assert.ok(checksum >= 0);
+  assert.ok(audit > checksum);
+});

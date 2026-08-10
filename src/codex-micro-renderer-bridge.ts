@@ -334,6 +334,74 @@ const SNAPSHOT_EXPRESSION = `(async () => {
   return { slots, activeThreadKey, activeThreadTitle, layout, agentSource, lightingAutoOff, theme, ...(usage ? { usage } : {}) };
 })()`;
 
+export function buildEnsureThreadActivatedExpression(threadKey: string): string {
+  return `(async () => {
+      const threadKey = ${JSON.stringify(threadKey)};
+      const threadIdSuffix = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+      const bareThreadId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const canonicalThreadId = (value) => value?.match(threadIdSuffix)?.[1]?.toLowerCase() ?? value;
+      const matchesThreadKeys = (left, right) => {
+        if (!left || !right) return false;
+        if (left.toLowerCase() === right.toLowerCase()) return true;
+        return canonicalThreadId(left) === canonicalThreadId(right) &&
+          (bareThreadId.test(left) || bareThreadId.test(right));
+      };
+      const activeSidebarThreadKey = () => document.querySelector('[data-app-action-sidebar-thread-id][data-app-action-sidebar-thread-active="true"]')
+          ?.getAttribute('data-app-action-sidebar-thread-id')
+        ?? document.querySelector('[data-app-action-sidebar-thread-id][aria-current="page"]')
+          ?.getAttribute('data-app-action-sidebar-thread-id')
+        ?? null;
+      const activeComposerThreadKey = () => document.querySelector('[data-above-composer-conversation-id]')
+        ?.getAttribute('data-above-composer-conversation-id')
+        ?? null;
+      const sidebarThreadKeys = () => [...document.querySelectorAll('[data-app-action-sidebar-thread-id]')]
+        .map((element) => element.getAttribute('data-app-action-sidebar-thread-id'))
+        .filter(Boolean);
+      const selectSidebarThreadKey = (candidate, sidebarCandidates = sidebarThreadKeys()) => {
+        const exact = sidebarCandidates.find((sidebarCandidate) => sidebarCandidate.toLowerCase() === candidate.toLowerCase());
+        if (exact) return exact;
+        const equivalent = sidebarCandidates.filter((sidebarCandidate) => matchesThreadKeys(sidebarCandidate, candidate));
+        return equivalent.length === 1 ? equivalent[0] : null;
+      };
+      const isActiveThread = () => {
+        const sidebarCandidates = sidebarThreadKeys();
+        const selectedThreadKey = selectSidebarThreadKey(threadKey, sidebarCandidates);
+        const sidebarThreadKey = activeSidebarThreadKey();
+        if (sidebarThreadKey) {
+          return sidebarThreadKey.toLowerCase() === selectedThreadKey?.toLowerCase();
+        }
+        const composerThreadKey = activeComposerThreadKey();
+        if (!composerThreadKey) return false;
+        if (sidebarCandidates.length === 0) {
+          return composerThreadKey.toLowerCase() === threadKey.toLowerCase();
+        }
+        const selectedComposerThreadKey = selectSidebarThreadKey(composerThreadKey, sidebarCandidates);
+        return selectedThreadKey != null &&
+          selectedThreadKey.toLowerCase() === selectedComposerThreadKey?.toLowerCase();
+      };
+      const waitForActive = async (duration) => {
+        const deadline = Date.now() + duration;
+        while (Date.now() < deadline) {
+          if (isActiveThread()) return true;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return isActiveThread();
+      };
+      if (await waitForActive(250)) return 'active';
+      const items = [...document.querySelectorAll('[data-app-action-sidebar-thread-id]')];
+      const selectedThreadKey = selectSidebarThreadKey(threadKey);
+      const item = selectedThreadKey
+        ? items.find((element) => element.getAttribute('data-app-action-sidebar-thread-id') === selectedThreadKey)
+        : null;
+      if (!item) return 'missing';
+      const selector = 'button, a, [role="button"], [role="link"]';
+      const clickable = item.matches(selector) ? item : item.querySelector(selector) ?? item.closest(selector) ?? item;
+      if (typeof clickable.click === 'function') clickable.click();
+      else clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      return await waitForActive(1500) ? 'opened' : 'failed';
+    })()`;
+}
+
 export class CodexMicroRendererBridge {
   private socket?: WebSocket;
   private nextId = 0;
@@ -379,55 +447,9 @@ export class CodexMicroRendererBridge {
   }
 
   private async ensureThreadActivated(threadKey: string): Promise<void> {
-    const result = await this.evaluate<"active" | "opened" | "missing" | "failed">(`(async () => {
-      const threadKey = ${JSON.stringify(threadKey)};
-      const threadIdSuffix = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-      const bareThreadId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const canonicalThreadId = (value) => value?.match(threadIdSuffix)?.[1]?.toLowerCase() ?? value;
-      const matchesThreadKey = (candidate) => {
-        if (!candidate) return false;
-        if (candidate.toLowerCase() === threadKey.toLowerCase()) return true;
-        return canonicalThreadId(candidate) === canonicalThreadId(threadKey) &&
-          (bareThreadId.test(candidate) || bareThreadId.test(threadKey));
-      };
-      const activeSidebarThreadKey = () => document.querySelector('[data-app-action-sidebar-thread-id][data-app-action-sidebar-thread-active="true"]')
-          ?.getAttribute('data-app-action-sidebar-thread-id')
-        ?? document.querySelector('[data-app-action-sidebar-thread-id][aria-current="page"]')
-          ?.getAttribute('data-app-action-sidebar-thread-id')
-        ?? null;
-      const activeComposerThreadKey = () => document.querySelector('[data-above-composer-conversation-id]')
-        ?.getAttribute('data-above-composer-conversation-id')
-        ?? null;
-      const isActiveThread = () => {
-        const sidebarThreadKey = activeSidebarThreadKey();
-        return sidebarThreadKey ? matchesThreadKey(sidebarThreadKey) : matchesThreadKey(activeComposerThreadKey());
-      };
-      const waitForActive = async (duration) => {
-        const deadline = Date.now() + duration;
-        while (Date.now() < deadline) {
-          if (isActiveThread()) return true;
-          await new Promise((resolve) => setTimeout(resolve, 25));
-        }
-        return isActiveThread();
-      };
-      if (await waitForActive(250)) return 'active';
-      const items = [...document.querySelectorAll('[data-app-action-sidebar-thread-id]')];
-      const sidebarThreadKeys = items
-        .map((element) => element.getAttribute('data-app-action-sidebar-thread-id'))
-        .filter(Boolean);
-      const exactThreadKey = sidebarThreadKeys.find((candidate) => candidate.toLowerCase() === threadKey.toLowerCase());
-      const equivalentThreadKeys = exactThreadKey ? [] : sidebarThreadKeys.filter(matchesThreadKey);
-      const selectedThreadKey = exactThreadKey ?? (equivalentThreadKeys.length === 1 ? equivalentThreadKeys[0] : null);
-      const item = selectedThreadKey
-        ? items.find((element) => element.getAttribute('data-app-action-sidebar-thread-id') === selectedThreadKey)
-        : null;
-      if (!item) return 'missing';
-      const selector = 'button, a, [role="button"], [role="link"]';
-      const clickable = item.matches(selector) ? item : item.querySelector(selector) ?? item.closest(selector) ?? item;
-      if (typeof clickable.click === 'function') clickable.click();
-      else clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      return await waitForActive(1500) ? 'opened' : 'failed';
-    })()`);
+    const result = await this.evaluate<"active" | "opened" | "missing" | "failed">(
+      buildEnsureThreadActivatedExpression(threadKey)
+    );
     if (result === "active" || result === "opened") return;
     if (result === "missing") {
       throw new Error("The exact Codex task is not present in this host's loaded sidebar. Open or pin it once in Codex, then retry.");

@@ -33,9 +33,6 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Stream Deck validation failed.' }
   & npm run pack
   if ($LASTEXITCODE -ne 0) { throw 'Stream Deck packaging failed.' }
-  & node scripts/audit-release.mjs
-  if ($LASTEXITCODE -ne 0) { throw 'Release audit failed.' }
-
   Remove-Item -LiteralPath $output -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $output | Out-Null
   Copy-Item -LiteralPath (Join-Path $root 'com.xonika9.codex-deck.streamDeckPlugin') -Destination $output
@@ -50,6 +47,8 @@ try {
   $checksums = @($artifacts | ForEach-Object { "{0}  {1}" -f (Get-Sha256Hex $_.FullName), $_.Name })
   $checksumText = ($checksums -join "`n") + "`n"
   [IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS.txt'), $checksumText, [Text.UTF8Encoding]::new($false))
+  & node scripts/audit-release.mjs $output
+  if ($LASTEXITCODE -ne 0) { throw 'Release audit failed.' }
   Write-Host "Release candidate prepared at: $output"
 } finally {
   Pop-Location

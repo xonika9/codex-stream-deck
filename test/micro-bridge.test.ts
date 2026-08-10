@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import {
-  canonicalThreadId, CodexMicroRendererBridge, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
+  buildEnsureThreadActivatedExpression, canonicalThreadId, CodexMicroRendererBridge, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
   retainEvaluationPromise, selectCodexMainTarget, selectSidebarThreadId, threadKeysEquivalent
 } from "../src/codex-micro-renderer-bridge.js";
 import { ADDITIONAL_KEYCAPS, OFFICIAL_KEYCAP_IDS } from "../src/keycaps.js";
@@ -93,6 +94,55 @@ test("renderer thread comparisons accept bare IDs without conflating host-prefix
   assert.equal(selectSidebarThreadId(remote, [local, remote]), remote);
   assert.equal(selectSidebarThreadId(threadId, [local]), local);
   assert.equal(selectSidebarThreadId(threadId, [local, remote]), undefined);
+});
+
+async function evaluateThreadActivation(
+  threadKey: string,
+  sidebarThreadIds: string[],
+  activeSidebarThreadId: string | null,
+  composerThreadId: string | null
+): Promise<unknown> {
+  const element = (id: string) => ({
+    getAttribute: (name: string) => name === "data-app-action-sidebar-thread-id" || name === "data-above-composer-conversation-id" ? id : null,
+    matches: () => false,
+    querySelector: () => null,
+    closest: () => null,
+    click: () => {}
+  });
+  const sidebarElements = sidebarThreadIds.map(element);
+  let now = 0;
+  return runInNewContext(buildEnsureThreadActivatedExpression(threadKey), {
+    Date: { now: () => now },
+    document: {
+      querySelector: (selector: string) => {
+        if (selector.includes('data-app-action-sidebar-thread-active="true"')) {
+          return activeSidebarThreadId ? element(activeSidebarThreadId) : null;
+        }
+        if (selector.includes('aria-current="page"')) return null;
+        if (selector.includes("data-above-composer-conversation-id")) {
+          return composerThreadId ? element(composerThreadId) : null;
+        }
+        return null;
+      },
+      querySelectorAll: () => sidebarElements
+    },
+    setTimeout: (callback: () => void, duration: number) => {
+      now += duration;
+      queueMicrotask(callback);
+    }
+  }) as Promise<unknown>;
+}
+
+test("thread activation evaluator preserves host identity across sidebar and composer state", async () => {
+  const threadId = "019fc4e4-4ecc-7f20-b7f5-855c11da7b37";
+  const local = `local:${threadId}`;
+  const remote = `remote:${threadId}`;
+
+  assert.equal(await evaluateThreadActivation(threadId, [local, remote], null, threadId), "missing");
+  assert.equal(await evaluateThreadActivation(local, [local, remote], null, threadId), "failed");
+  assert.equal(await evaluateThreadActivation(local, [local, remote], local, threadId), "active");
+  assert.equal(await evaluateThreadActivation(threadId, [local], null, threadId), "active");
+  assert.equal(await evaluateThreadActivation(local, [], null, local), "active");
 });
 
 test("native action 5 maps the combined layout slot to Codex push-to-talk", () => {
