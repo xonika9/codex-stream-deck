@@ -1474,7 +1474,49 @@ test("controller applies the active queue only after host routing and preserves 
 
   internal.activeQueueEnabled = true;
   await internal.refreshDisplay();
-  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [4, 1]);
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [1, 4]);
+});
+
+test("controller keeps one working-rank epoch, advances on a higher revision, and resets it on disable", async () => {
+  const input = structuredClone(snapshot);
+  input.slots.forEach((slot) => { slot.status = "idle"; slot.selected = false; });
+  Object.assign(input.slots[0]!, { status: "working", activityAt: 300, ownedByHost: true, workStartedAt: 300, workStartRevision: 1 });
+  Object.assign(input.slots[1]!, { status: "working", activityAt: 200, ownedByHost: true, workStartedAt: 200, workStartRevision: 1 });
+  Object.assign(input.slots[2]!, { status: "working", activityAt: 100, ownedByHost: true, workStartedAt: 100, workStartRevision: 1 });
+  const controller = new DeckController();
+  const internal = controller as unknown as {
+    activeQueueEnabled: boolean;
+    localHost?: CodexHost;
+    localSnapshot?: HostSnapshot;
+    localHealth: { state: "ready" };
+    routedSlots: RoutedAgentSlot[];
+    refreshDisplay: () => Promise<void>;
+  };
+  internal.localHost = host;
+  internal.localSnapshot = { host, snapshot: input, observedAt: 1_000 };
+  internal.localHealth = { state: "ready" };
+  internal.activeQueueEnabled = true;
+
+  await internal.refreshDisplay();
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [0, 1, 2]);
+  Object.assign(input.slots[2]!, { selected: true, title: "Opened", activityAt: 9_000 });
+  await internal.refreshDisplay();
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [0, 1, 2]);
+  Object.assign(input.slots[2]!, { workStartedAt: 400, workStartRevision: 2 });
+  await internal.refreshDisplay();
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [2, 0, 1]);
+
+  delete input.slots[0]!.workStartedAt;
+  delete input.slots[0]!.workStartRevision;
+  delete input.slots[1]!.workStartedAt;
+  delete input.slots[1]!.workStartRevision;
+  delete input.slots[2]!.workStartedAt;
+  delete input.slots[2]!.workStartRevision;
+  controller.setAgentDisplaySettings({ activeQueueEnabled: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.setAgentDisplaySettings({ activeQueueEnabled: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(internal.routedSlots.map((slot) => slot.sourceSlot), [0, 1, 2]);
 });
 
 test("active queue settings default off and a change immediately reprojects registered agents", async () => {

@@ -2,7 +2,7 @@ import streamDeck, { type KeyAction } from "@elgato/streamdeck";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { codexDeckStateRoot } from "./codex-deck-paths.js";
-import { projectActiveQueue } from "./active-queue.js";
+import { ActiveQueueRankIndex, projectActiveQueue } from "./active-queue.js";
 import {
   isRemoteControlRequest, readControlTarget, resolveStartupControlTarget, writeControlTarget,
   type HostPlatform as ControlTarget
@@ -56,6 +56,7 @@ export class DeckController {
   private readonly rateLimitResetActions = new Map<string, KeyAction>();
   private readonly resetHolds = new Map<string, number>();
   private readonly activityIndex = new HostActivityIndex();
+  private readonly activeQueueRankIndex = new ActiveQueueRankIndex();
   private readonly pressedAgents = new Map<number, RoutedAgentSlot>();
   private readonly emptyAgentPresses = new Set<number>();
   private readonly pressedControlTargets = new Map<string, string>();
@@ -203,6 +204,7 @@ export class DeckController {
     this.showContextRings = showContextRings;
     this.activeQueueEnabled = activeQueueEnabled;
     if (activeQueueChanged) {
+      this.activeQueueRankIndex.clear();
       void this.refreshDisplay().catch((error) =>
         streamDeck.logger.error(`Agent display settings refresh failed: ${String(error)}`));
     } else {
@@ -414,10 +416,13 @@ export class DeckController {
         streamDeck.logger.warn(`Codex agent sources differ (${agentSources.join(" ")}). The Windows controller mode determines the combined list; Pinned and Individual assignments merge only hosts using that mode.`);
       }
     }
+    const now = Date.now();
     const merged = this.activeQueueEnabled
-      ? this.activityIndex.mergeActiveCatalog(inputs, Date.now(), this.localHost?.hostId)
-      : this.activityIndex.merge(inputs, Date.now(), this.localHost?.hostId);
-    this.routedSlots = this.activeQueueEnabled ? projectActiveQueue(merged, inputs) : merged;
+      ? this.activityIndex.mergeActiveCatalog(inputs, now, this.localHost?.hostId)
+      : this.activityIndex.merge(inputs, now, this.localHost?.hostId);
+    this.routedSlots = this.activeQueueEnabled
+      ? projectActiveQueue(merged, inputs, this.activeQueueRankIndex, now)
+      : merged;
 
     const assignments = this.routedSlots.map((slot) => `${slot.id}=${slot.host.platform}:${slot.threadKey ?? "empty"}`).join(" ");
     if (assignments !== this.lastAssignmentSignature) {

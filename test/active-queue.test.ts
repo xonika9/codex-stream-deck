@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectActiveQueue } from "../src/active-queue.js";
+import { ActiveQueueRankIndex, projectActiveQueue } from "../src/active-queue.js";
 import { HostActivityIndex, type HostSnapshot } from "../src/relay-protocol.js";
 import type { CodexHost, MicroSnapshot, RoutedAgentSlot } from "../src/types.js";
 
@@ -26,6 +26,14 @@ function routed(
     id: sourceSlot, sourceSlot, status, activityAt, host, threadKey,
     title: `Task ${sourceSlot}`, selected: false, observedAt: 10_000
   };
+}
+
+function trusted(slot: RoutedAgentSlot, startedAt: number, revision: number, conversationId = slot.threadKey!): RoutedAgentSlot {
+  return { ...slot, conversationId, workStartedAt: startedAt, workStartRevision: revision };
+}
+
+function keys(slots: readonly RoutedAgentSlot[]): string[] {
+  return slots.map((slot) => slot.threadKey!);
 }
 
 function snapshot(host: CodexHost, hostSessions: MicroSnapshot["hostSessions"] = []): HostSnapshot {
@@ -62,7 +70,7 @@ test("active queue omits irrelevant states and compacts native slots two and fiv
   const projected = projectActiveQueue(slots, [snapshot(mac)]);
 
   assert.deepEqual(projected.map((slot) => slot.id), [0, 1]);
-  assert.deepEqual(projected.map((slot) => slot.sourceSlot), [4, 1]);
+  assert.deepEqual(projected.map((slot) => slot.sourceSlot), [1, 4]);
 });
 
 test("active queue remains an explicit projection and does not mutate native routing order", () => {
@@ -79,14 +87,14 @@ test("active queue remains an explicit projection and does not mutate native rou
   assert.deepEqual(projected.map((slot) => slot.sourceSlot), [1, 4]);
 });
 
-test("active queue orders attention, completion, then working with group-specific recency", () => {
+test("active queue orders attention and completion as before, then seeds trusted working starts newest first", () => {
   const slots = [
-    routed(0, "working", 400),
+    trusted(routed(0, "working", 400), 400, 1),
     routed(1, "completed", 200),
     routed(2, "error", 150),
     routed(3, "awaiting-response", 100),
     routed(4, "unread", 300),
-    routed(5, "thinking", 500)
+    trusted(routed(5, "thinking", 500), 500, 1)
   ];
 
   const projected = projectActiveQueue(slots, [snapshot(mac)]);
@@ -94,7 +102,7 @@ test("active queue orders attention, completion, then working with group-specifi
   assert.deepEqual(projected.map((slot) => slot.sourceSlot), [3, 2, 1, 4, 5, 0]);
 });
 
-test("active queue uses owning host session activity for completion FIFO and working recency", () => {
+test("active queue uses owning host session activity only for completion FIFO", () => {
   const completedLater = thread(21);
   const completedEarlier = thread(22);
   const workingOlder = thread(23);
@@ -102,8 +110,8 @@ test("active queue uses owning host session activity for completion FIFO and wor
   const slots = [
     routed(0, "complete", 10, windows, completedLater),
     routed(1, "complete", 900, mac, completedEarlier),
-    routed(2, "working", 990, windows, workingOlder),
-    routed(3, "working", 20, mac, workingNewer)
+    trusted(routed(2, "working", 990, windows, workingOlder), 300, 1),
+    trusted(routed(3, "working", 20, mac, workingNewer), 400, 1)
   ];
   const inputs = [
     snapshot(mac, [
@@ -125,12 +133,12 @@ test("active queue uses owning host session activity for completion FIFO and wor
   assert.equal(projected[1]!.host.hostId, windows.hostId);
 });
 
-test("active queue puts trustworthy timestamps first and resolves stable ties", () => {
+test("active queue puts trusted structural starts before unknown work and resolves stable ties", () => {
   const sameSlotA = routed(4, "working", undefined, mac, thread(42));
   const sameSlotB = routed(4, "working", Number.NaN, windows, thread(41));
   const slots = [
     sameSlotA,
-    routed(5, "working", 250, mac, thread(43)),
+    trusted(routed(5, "working", 250, mac, thread(43)), 250, 1),
     routed(2, "working", 0, mac, thread(44)),
     sameSlotB
   ];
@@ -138,8 +146,14 @@ test("active queue puts trustworthy timestamps first and resolves stable ties", 
   const first = projectActiveQueue(slots, [snapshot(mac), snapshot(windows)]);
   const second = projectActiveQueue(slots, [snapshot(mac), snapshot(windows)]);
 
-  assert.deepEqual(first.map((slot) => slot.threadKey), [thread(43), thread(44), thread(41), thread(42)]);
+  assert.deepEqual(first.map((slot) => slot.threadKey), [thread(43), thread(42), thread(44), thread(41)]);
   assert.deepEqual(second.map((slot) => slot.threadKey), first.map((slot) => slot.threadKey));
+});
+
+test("equal trusted starts use stable global task identity ties", () => {
+  const laterIdentity = trusted(routed(0, "working", undefined, windows, thread(46)), 500, 1);
+  const earlierIdentity = trusted(routed(1, "working", undefined, mac, thread(45)), 500, 1);
+  assert.deepEqual(keys(projectActiveQueue([laterIdentity, earlierIdentity], [])), [thread(45), thread(46)]);
 });
 
 test("active queue caps at six and preserves routed command identity while replacing display ids", () => {
@@ -172,8 +186,8 @@ test("full active catalog assigns projected transport slots to tasks outside the
   input.snapshot.activeCatalog = {
     complete: true,
     candidates: [
-      { threadKey: thread(81), conversationId: thread(81), title: "Pinned", status: "working", selected: false, activityAt: 200, catalogIndex: 0 },
-      { threadKey: thread(82), conversationId: thread(82), title: "Unpinned", status: "working", selected: false, activityAt: 300, catalogIndex: 9 }
+      { threadKey: thread(81), conversationId: thread(81), title: "Pinned", status: "working", selected: false, activityAt: 200, catalogIndex: 0, ownedByHost: true, workStartedAt: 200, workStartRevision: 1 },
+      { threadKey: thread(82), conversationId: thread(82), title: "Unpinned", status: "working", selected: false, activityAt: 300, catalogIndex: 9, ownedByHost: true, workStartedAt: 300, workStartRevision: 1 }
     ]
   };
 
@@ -189,8 +203,8 @@ test("full active catalog preserves native transport slots after queue reorderin
   input.snapshot.activeCatalog = {
     complete: true,
     candidates: [
-      { threadKey: thread(83), conversationId: thread(83), title: "Native five", status: "working", selected: false, activityAt: 200, catalogIndex: 0, nativeSlot: 4 },
-      { threadKey: thread(84), conversationId: thread(84), title: "Native two", status: "working", selected: false, activityAt: 300, catalogIndex: 1, nativeSlot: 1 }
+      { threadKey: thread(83), conversationId: thread(83), title: "Native five", status: "working", selected: false, activityAt: 200, catalogIndex: 0, nativeSlot: 4, ownedByHost: true, workStartedAt: 200, workStartRevision: 1 },
+      { threadKey: thread(84), conversationId: thread(84), title: "Native two", status: "working", selected: false, activityAt: 300, catalogIndex: 1, nativeSlot: 1, ownedByHost: true, workStartedAt: 300, workStartRevision: 1 }
     ]
   };
 
@@ -272,4 +286,102 @@ test("custom source keeps the fixed native six instead of pooling the full catal
     new HostActivityIndex().mergeActiveCatalog([input]).map((slot) => slot.threadKey),
     input.snapshot.slots.map((slot) => slot.threadKey)
   );
+});
+
+test("working rank is stable across selection, title, activity, catalog reorder, and identical refresh", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = trusted(routed(0, "working", 300, mac, thread(101)), 300, 1);
+  const b = trusted(routed(1, "working", 200, mac, thread(102)), 200, 1);
+  const c = trusted(routed(2, "working", 100, mac, thread(103)), 100, 1);
+  assert.deepEqual(keys(projectActiveQueue([a, b, c], [], index, 1_000)), [a.threadKey, b.threadKey, c.threadKey]);
+
+  const refreshed = [
+    { ...c, selected: true, title: "Opened C", activityAt: 9_000, catalogIndex: 0 },
+    { ...a, selected: true, title: "Opened A", activityAt: 8_000, catalogIndex: 2 },
+    { ...b, title: "Background output", activityAt: 10_000, catalogIndex: 1 }
+  ];
+  assert.deepEqual(keys(projectActiveQueue(refreshed, [], index, 2_000)), [a.threadKey, b.threadKey, c.threadKey]);
+  assert.deepEqual(keys(projectActiveQueue(refreshed, [], index, 3_000)), [a.threadKey, b.threadKey, c.threadKey]);
+});
+
+test("trusted revisions are immutable across shifted timestamps and only a higher same-owner revision advances", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = trusted(routed(0, "working", 1, mac, thread(111)), 300, 10);
+  const b = trusted(routed(1, "working", 2, mac, thread(112)), 200, 20);
+  const c = trusted(routed(2, "working", 3, mac, thread(113)), 100, 30);
+  projectActiveQueue([a, b, c], [], index, 1_000);
+
+  assert.deepEqual(keys(projectActiveQueue([{ ...c, workStartedAt: 999 }, a, b], [], index, 2_000)),
+    [a.threadKey, b.threadKey, c.threadKey]);
+  assert.deepEqual(keys(projectActiveQueue([{ ...c, workStartedAt: 1_000, workStartRevision: 31 }, a, b], [], index, 3_000)),
+    [c.threadKey, a.threadKey, b.threadKey]);
+  assert.deepEqual(keys(projectActiveQueue([{ ...b, workStartedAt: 2_000, workStartRevision: 19 }, a, c], [], index, 4_000)),
+    [c.threadKey, a.threadKey, b.threadKey]);
+});
+
+test("unknown work uses stable first-seen order and infers only idle or completion to working", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = routed(0, "working", 100, mac, thread(121));
+  const b = routed(1, "working", 900, mac, thread(122));
+  assert.deepEqual(keys(projectActiveQueue([a, b], [], index, 1_000)), [a.threadKey, b.threadKey]);
+  assert.deepEqual(keys(projectActiveQueue([{ ...b, catalogIndex: 0 }, { ...a, catalogIndex: 9 }], [], index, 2_000)),
+    [a.threadKey, b.threadKey]);
+
+  const midEpoch = routed(2, "working", 5_000, mac, thread(123));
+  assert.deepEqual(keys(projectActiveQueue([midEpoch, b, a], [], index, 3_000)), [a.threadKey, b.threadKey, midEpoch.threadKey]);
+  projectActiveQueue([{ ...midEpoch, status: "idle" }, b, a], [], index, 4_000);
+  assert.deepEqual(keys(projectActiveQueue([{ ...midEpoch, status: "working" }, b, a], [], index, 5_000)),
+    [midEpoch.threadKey, a.threadKey, b.threadKey]);
+
+  const approval = routed(3, "approval", 6_000, mac, thread(124));
+  const error = routed(4, "error", 7_000, mac, thread(125));
+  projectActiveQueue([approval, error, midEpoch, a, b], [], index, 6_000);
+  assert.deepEqual(keys(projectActiveQueue([
+    { ...approval, status: "working" }, { ...error, status: "working" }, midEpoch, a, b
+  ], [], index, 7_000)), [midEpoch.threadKey, a.threadKey, b.threadKey, approval.threadKey, error.threadKey]);
+});
+
+test("completion to working infers a new unknown rank and observes candidates beyond the six-item cap", () => {
+  const index = new ActiveQueueRankIndex();
+  const working = Array.from({ length: 6 }, (_, id) => routed(id, "working", 10_000 - id, mac, thread(150 + id)));
+  const seventh = routed(6, "complete", 1, mac, thread(156));
+  assert.equal(projectActiveQueue([...working, seventh], [], index, 1_000).length, 6);
+  const projected = projectActiveQueue([...working, { ...seventh, status: "working" }], [], index, 2_000);
+  assert.equal(projected.length, 6);
+  assert.equal(projected[0]!.threadKey, seventh.threadKey);
+});
+
+test("rank survives short disappearance, prunes after 24 hours, and clear starts a fresh epoch", () => {
+  const day = 24 * 60 * 60 * 1_000;
+  const index = new ActiveQueueRankIndex();
+  const a = routed(0, "working", undefined, mac, thread(131));
+  const b = routed(1, "working", undefined, mac, thread(132));
+  projectActiveQueue([a, b], [], index, 0);
+  projectActiveQueue([b], [], index, day - 1);
+  assert.deepEqual(keys(projectActiveQueue([b, a], [], index, day)), [a.threadKey, b.threadKey]);
+  projectActiveQueue([b], [], index, day + 1);
+  assert.deepEqual(keys(projectActiveQueue([b, a], [], index, day * 2 + 1)), [b.threadKey, a.threadKey]);
+  index.clear();
+  assert.deepEqual(keys(projectActiveQueue([a, b], [], index, day * 2 + 2)), [a.threadKey, b.threadKey]);
+
+  const continuouslyPresent = new ActiveQueueRankIndex();
+  projectActiveQueue([a, b], [], continuouslyPresent, 0);
+  assert.deepEqual(keys(projectActiveQueue([b, a], [], continuouslyPresent, day * 2)), [a.threadKey, b.threadKey]);
+});
+
+test("trusted owner change preserves rank and baselines its revision; temporary host-local keys stay separate", () => {
+  const index = new ActiveQueueRankIndex();
+  const identity = thread(141);
+  const a = trusted(routed(0, "working", 1, mac, `local:${identity}`), 200, 10, identity);
+  const b = trusted(routed(1, "working", 1, mac, thread(142)), 300, 5);
+  assert.deepEqual(keys(projectActiveQueue([a, b], [], index, 1_000)), [b.threadKey, a.threadKey]);
+  const movedOwner = { ...a, host: windows, threadKey: `remote:${identity}`, workStartedAt: 900, workStartRevision: 50 };
+  assert.deepEqual(keys(projectActiveQueue([b, movedOwner], [], index, 2_000)), [b.threadKey, movedOwner.threadKey]);
+  assert.deepEqual(keys(projectActiveQueue([b, { ...movedOwner, workStartRevision: 51 }], [], index, 3_000)),
+    [movedOwner.threadKey, b.threadKey]);
+
+  const suffix = thread(143);
+  const localTemp = routed(2, "working", undefined, mac, `local:client-new-thread:${suffix}`);
+  const remoteTemp = routed(3, "working", undefined, mac, `remote:client-new-thread:${suffix}`);
+  assert.equal(projectActiveQueue([localTemp, remoteTemp], [], new ActiveQueueRankIndex(), 4_000).length, 2);
 });
