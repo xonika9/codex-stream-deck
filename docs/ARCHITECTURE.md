@@ -73,10 +73,26 @@ full catalog; the projection may still compact relevant candidates within that s
 The projection drops `idle`, `off`, and unknown states, then compacts candidates
 into display positions zero through five. Attention and error states sort first;
 completion and unread states use oldest available activity first; working states
-use newest available activity first. Stable source-slot, task, and host identity
-break missing-time or equal-time ties. Display positions may therefore change,
-but commands keep the exact host-local thread key, native transport-slot hint,
-and owning host. Pinned and unpinned tasks share the full catalog in this view.
+use the latest trustworthy user-start event. Session ownership recognizes only a
+structural JSONL record with `type === "event_msg"` and
+`payload.type === "user_message"`, and reads only its type, timestamp, and byte
+offset. The message field is not read. Its timestamp becomes `workStartedAt` and
+its byte offset becomes the monotonic `workStartRevision`; background reasoning,
+tool and assistant output, title or selection changes, renderer activity, and
+snapshot refreshes remain general activity and do not change working rank.
+
+The long-lived controller owns an in-memory queue epoch. A trustworthy start is
+ranked once after clock normalization; repeated or lower revisions remain fixed,
+while a higher revision from the task's current exact owner moves it to the front
+of the working group. A task without a trustworthy start receives a stable
+queue-local fallback. First observing an already-working task only seeds that
+fallback and never fabricates a start time; a later observed idle/completion to
+working transition may raise it within the unknown-start tier. Known starts sort
+ahead of unknown starts. Disappeared identities remain for 24 hours, while
+disabling and re-enabling Active queue or restarting the process clears the epoch.
+Display positions may therefore change only for these defined transitions, but
+commands keep the exact host-local thread key, native transport-slot hint, and
+owning host. Pinned and unpinned tasks share the full catalog in this view.
 
 A missing projected task renders as a black no-op key while the relevant host is
 healthy. Connecting, degraded, and offline states continue through the normal
@@ -84,9 +100,14 @@ diagnostic rendering path. Completion freshness remains bounded by the existing
 upstream structural-event window and acknowledgement behavior: the projection
 adds no task database, durable queue, or restart persistence.
 
-This display-only projection does not change relay protocol version 1, owner
-routing, the loopback-only CDP endpoint, independent Windows-only or macOS-only
-operation, optional multi-host operation, or the privacy boundaries below.
+Relay protocol version 1 is extended additively with the optional atomic
+`workStartedAt` / `workStartRevision` pair; the version is not bumped. Old senders
+omit it. Receivers reject malformed or partial pairs and normalize the timestamp
+to the receiver clock. Only the exact rollout owner can contribute the pair during
+mirror merge, so renderer-mirror activity cannot reorder a task. This display-only
+projection does not change owner routing, the loopback-only CDP endpoint,
+independent Windows-only or macOS-only operation, optional multi-host operation,
+or the privacy boundaries below.
 
 Usage data remains part of the same typed host snapshot, but usage and reset credits are account-scoped and therefore do not follow the Mac/Windows function-key target. The controller prefers a healthy local account snapshot and falls back to the paired host only when local usage is unavailable. Window identity is derived from the duration returned by Codex rather than from primary/secondary ordering. A missing 5-hour window is represented as unavailable, and Automatic mode falls back to weekly. The bridge refreshes a stale renderer-owned usage query at most once every 15 seconds, so background-window values do not depend on Codex receiving focus.
 

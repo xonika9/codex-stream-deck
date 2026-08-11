@@ -14,6 +14,7 @@ execution: code
 
 - **Objective:** Add an opt-in Stream Deck view that compacts relevant tasks from Codex's bounded native pinned + unpinned renderer catalog into the first Agent keys and renders unused positions black.
 - **Authority:** The user's queue behavior and later explicit 2026-08-11 expansion to the full native renderer catalog override the selected Codex source only while the option is enabled, except that `custom` retains its fixed native candidate behavior.
+- **Working-order supersession:** The generic working-recency rule in this plan (including R3, AE4, KTD4, and the U3 ordering approach) is superseded only for working tasks by `docs/plans/2026-08-11-002-fix-stable-active-queue-order-plan.md`. Attention, completion, membership, routing, rendering, and all other behavior in this plan remain authoritative.
 - **Execution profile:** Test-first TypeScript change with renderer bridge, types, ownership, relay, property-inspector, rendering, controller, multi-host, and documentation coverage.
 - **Stop conditions:** Stop if the implementation requires reading task content, a task database, hotkey fallback, a non-loopback CDP endpoint, or an untyped relay expansion.
 - **Tail ownership:** `ce-work` owns implementation, review, required repository checks, and local commits on `main`; it does not push or open a PR without separate authority.

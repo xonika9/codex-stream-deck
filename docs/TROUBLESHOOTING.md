@@ -86,6 +86,15 @@ If **Active queue** is enabled, the plugin uses Codex's complete native pinned +
 - Idle chats are intentionally unavailable while Active queue is enabled. Turn it off when you need their original assignments.
 - `CONNECT`, `DEGRADED`, or `OFFLINE` tiles are diagnostics and remain visible instead of becoming black. Follow the bridge or relay checks in this guide for those states.
 
+## Working Agent keys changed order unexpectedly
+
+- A new structural user message legitimately moves a continuously working task forward. Merely opening or selecting a task, changing its title, background reasoning or tool work, assistant output, renderer activity, and refreshes do not.
+- A queue epoch is process-local. Disabling and re-enabling **Active queue**, or restarting the plugin, starts a new epoch and may reseed tasks whose start event is unknown.
+- Starts can be unknown with an older sender, after a cold start, or when the event is outside the bounded 512 KiB session tail. First seeing a task already working gives it a stable fallback position; it is not treated as newly started. Known starts rank ahead of unknown starts, and an observed idle/completion-to-working transition may move an unknown task within its tier.
+- Temporarily disappeared tasks retain their queue-local rank for 24 hours. A longer absence is treated as a fresh unknown observation.
+- In multi-host mode, update both hosts before diagnosing mixed-version order. Relay protocol v1 remains compatible, but an older sender omits the optional start pair and therefore uses the unknown-start fallback. Mirror activity cannot reorder a task; only a higher start revision from the exact rollout owner can do so.
+- Ordering inspects only the structural event type, timestamp, and byte offset. It does not read the user-message text or send that text through the relay.
+
 ## Local command icon does not appear
 
 - Verify the file is in `%LOCALAPPDATA%\CodexDeck\icons` on Windows or `~/Library/Application Support/CodexDeck/icons` on macOS.
