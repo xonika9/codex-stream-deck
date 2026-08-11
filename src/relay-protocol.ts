@@ -58,6 +58,13 @@ export function normalizeHostSnapshotAtReceipt(
     if (!Number.isFinite(value) || value <= 0) return value;
     return Math.max(1, value + offset);
   };
+  const normalizeWorkStart = (value: {
+    workStartedAt?: number; workStartRevision?: number; ownedByHost?: boolean
+  }, requiresOwnership = false): { workStartedAt?: number; workStartRevision?: number } => {
+    if (requiresOwnership && value.ownedByHost !== true) return {};
+    const pair = validWorkStartPair(value, input.observedAt);
+    return pair ? { workStartedAt: shift(pair.workStartedAt), workStartRevision: pair.workStartRevision } : {};
+  };
   const usage = input.snapshot.usage
     ? {
         ...input.snapshot.usage,
@@ -75,18 +82,27 @@ export function normalizeHostSnapshotAtReceipt(
       ...input.snapshot,
       slots: input.snapshot.slots.map((slot) => ({
         ...slot,
-        activityAt: slot.activityAt == null ? undefined : shift(slot.activityAt)
+        activityAt: slot.activityAt == null ? undefined : shift(slot.activityAt),
+        workStartedAt: undefined,
+        workStartRevision: undefined,
+        ...normalizeWorkStart(slot, true)
       })),
       activeCatalog: input.snapshot.activeCatalog && {
         ...input.snapshot.activeCatalog,
         candidates: input.snapshot.activeCatalog.candidates.map((candidate) => ({
           ...candidate,
-          activityAt: candidate.activityAt == null ? undefined : shift(candidate.activityAt)
+          activityAt: candidate.activityAt == null ? undefined : shift(candidate.activityAt),
+          workStartedAt: undefined,
+          workStartRevision: undefined,
+          ...normalizeWorkStart(candidate, true)
         }))
       },
       hostSessions: input.snapshot.hostSessions?.map((session) => ({
         ...session,
-        activityAt: shift(session.activityAt)!
+        activityAt: shift(session.activityAt)!,
+        workStartedAt: undefined,
+        workStartRevision: undefined,
+        ...normalizeWorkStart(session)
       })),
       usage
     }
@@ -187,6 +203,8 @@ export class HostActivityIndex {
           nativeSlot: candidate.nativeSlot,
           ownedByHost: candidate.ownedByHost,
           contextUsedPercent: candidate.contextUsedPercent,
+          workStartedAt: candidate.workStartedAt,
+          workStartRevision: candidate.workStartRevision,
           host: input.host,
           sourceSlot: candidate.nativeSlot ?? 0,
           observedAt: input.observedAt
@@ -328,9 +346,15 @@ function emptyRoutedPosition(input: HostSnapshot, id: number): RoutedAgentSlot {
 export function parseRelayServerMessage(value: unknown): RelayServerMessage | null {
   if (!isRecord(value) || value.protocol !== RELAY_PROTOCOL_VERSION || typeof value.type !== "string") return null;
   if (value.type === "ready" && isHost(value.host)) return value as RelayReadyMessage;
-  if (value.type === "snapshot" && isHost(value.host) && Number.isFinite(value.observedAt) && isSnapshot(value.snapshot)) {
-    const activeCatalog = sanitizeActiveCatalog(value.snapshot.activeCatalog);
-    const snapshot = { ...value.snapshot };
+  if (value.type === "snapshot" && isHost(value.host) && typeof value.observedAt === "number" &&
+      Number.isFinite(value.observedAt) && isSnapshot(value.snapshot)) {
+    const observedAt = value.observedAt;
+    const activeCatalog = sanitizeActiveCatalog(value.snapshot.activeCatalog, observedAt);
+    const snapshot = {
+      ...value.snapshot,
+      slots: value.snapshot.slots.map((slot) => sanitizeSlotWorkStart(slot, observedAt)),
+      hostSessions: value.snapshot.hostSessions?.map((session) => sanitizeHostSession(session, observedAt))
+    };
     if (activeCatalog === undefined) delete snapshot.activeCatalog;
     else snapshot.activeCatalog = activeCatalog;
     return { ...value, snapshot } as RelaySnapshotMessage;
@@ -374,7 +398,8 @@ function isSnapshot(value: unknown): value is MicroSnapshot {
 }
 
 function sanitizeActiveCatalog(
-  value: unknown
+  value: unknown,
+  observedAt: number
 ): MicroSnapshot["activeCatalog"] | undefined {
   if (value == null) return undefined;
   if (!isRecord(value) || value.complete !== true || !Array.isArray(value.candidates)) return undefined;
@@ -392,9 +417,45 @@ function sanitizeActiveCatalog(
       catalogIndex: candidate.catalogIndex,
       ...(candidate.nativeSlot == null ? {} : { nativeSlot: candidate.nativeSlot }),
       ...(candidate.ownedByHost == null ? {} : { ownedByHost: candidate.ownedByHost }),
-      ...(candidate.contextUsedPercent == null ? {} : { contextUsedPercent: candidate.contextUsedPercent })
+      ...(candidate.contextUsedPercent == null ? {} : { contextUsedPercent: candidate.contextUsedPercent }),
+      ...(candidate.ownedByHost === true ? validWorkStartPair(candidate, observedAt) ?? {} : {})
     }))
   };
+}
+
+function sanitizeSlotWorkStart(
+  slot: MicroSnapshot["slots"][number],
+  observedAt: number
+): MicroSnapshot["slots"][number] {
+  const sanitized = { ...slot };
+  delete sanitized.workStartedAt;
+  delete sanitized.workStartRevision;
+  return {
+    ...sanitized,
+    ...(slot.ownedByHost === true ? validWorkStartPair(slot, observedAt) ?? {} : {})
+  };
+}
+
+function sanitizeHostSession(session: HostSessionPresence, observedAt: number): HostSessionPresence {
+  return {
+    threadId: session.threadId,
+    activityAt: session.activityAt,
+    status: session.status,
+    ...(session.completionRevision == null ? {} : { completionRevision: session.completionRevision }),
+    ...(session.contextUsedPercent == null ? {} : { contextUsedPercent: session.contextUsedPercent }),
+    ...(validWorkStartPair(session, observedAt) ?? {})
+  };
+}
+
+function validWorkStartPair(
+  value: { workStartedAt?: unknown; workStartRevision?: unknown },
+  observedAt: number
+): { workStartedAt: number; workStartRevision: number } | null {
+  const workStartedAt = validTimestamp(value.workStartedAt);
+  return workStartedAt != null && workStartedAt <= observedAt &&
+      integerIn(value.workStartRevision, 0, Number.MAX_SAFE_INTEGER)
+    ? { workStartedAt, workStartRevision: value.workStartRevision }
+    : null;
 }
 
 function isActiveCatalogCandidate(value: unknown): value is MicroAgentCandidate {
@@ -508,6 +569,10 @@ function mergeMirrors(
   const contextCandidate = candidates.find((candidate) =>
     candidate.ownedByHost === true && candidate.contextUsedPercent != null)
     ?? candidates.find((candidate) => candidate.contextUsedPercent != null);
+  const workStartOwner = sessionOwner?.session ?? candidates.find((candidate) =>
+    candidate.ownedByHost === true && !candidate.threadKey?.includes("client-new-thread") &&
+    (candidate.conversationId?.toLowerCase() === identity || threadIdentity(candidate.threadKey!) === identity) &&
+    candidate.workStartedAt != null && candidate.workStartRevision != null);
   const titleCandidate = candidates.find((candidate) => normalizedTitle(candidate.title));
   return {
     ...owner,
@@ -517,6 +582,8 @@ function mergeMirrors(
     status,
     selected: statusCandidates.some((candidate) => candidate.selected),
     contextUsedPercent: sessionOwner?.session.contextUsedPercent ?? contextCandidate?.contextUsedPercent,
+    workStartedAt: workStartOwner?.workStartedAt,
+    workStartRevision: workStartOwner?.workStartRevision,
     // A delayed status update in a cloud/SSH mirror must not make the task look
     // newly active or cause two simultaneously working keys to swap places.
     // Status and selection remain aggregated, but recency follows the backing

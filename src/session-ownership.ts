@@ -6,6 +6,10 @@ import type { HostSessionPresence, MicroSnapshot } from "./types.js";
 const SESSION_FILENAME = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const THREAD_KEY = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const COMPLETION_FRESHNESS_MS = 5 * 60_000;
+const WORK_START_RETENTION_MS = 24 * 60 * 60_000;
+const MAX_RETAINED_WORK_STARTS = 512;
+
+type WorkStartRecord = { workStartedAt: number; workStartRevision: number; lastSeenAt: number };
 
 export class CodexSessionOwnershipIndex {
   private sessionIds = new Set<string>();
@@ -14,6 +18,7 @@ export class CodexSessionOwnershipIndex {
   private acknowledgedCompletions = new Map<string, number>();
   private contextParsedSessions = new Set<string>();
   private attemptedContextSessions = new Set<string>();
+  private retainedWorkStarts = new Map<string, WorkStartRecord>();
   private refreshedAt = 0;
   private refreshInFlight?: Promise<void>;
 
@@ -64,9 +69,12 @@ export class CodexSessionOwnershipIndex {
             ...candidate,
             ownedByHost,
             status: ownedByHost && session ? reconcileOwnedStatus(candidate.status, session.status) : candidate.status,
+            workStartedAt: undefined,
+            workStartRevision: undefined,
             ...(session?.contextUsedPercent != null
               ? { contextUsedPercent: session.contextUsedPercent }
-              : {})
+              : {}),
+            ...workStartFields(session)
           };
         })
       },
@@ -78,9 +86,12 @@ export class CodexSessionOwnershipIndex {
           ...slot,
           ownedByHost,
           status: ownedByHost && session ? reconcileOwnedStatus(slot.status, session.status) : slot.status,
+          workStartedAt: undefined,
+          workStartRevision: undefined,
           ...(session?.contextUsedPercent != null
             ? { contextUsedPercent: session.contextUsedPercent }
-            : {})
+            : {}),
+          ...workStartFields(session)
         };
       })
     };
@@ -164,7 +175,19 @@ export class CodexSessionOwnershipIndex {
         : { status: "idle" as const };
       if (shouldRead) contextParsed.add(threadId);
       const { activityAt, ...status } = recentStatus;
-      return { threadId, activityAt: activityAt ?? fileActivityAt, ...status };
+      const observedWorkStart = workStartFields(recentStatus);
+      const prior = this.retainedWorkStarts.get(threadId);
+      if (observedWorkStart.workStartRevision != null &&
+        (prior == null || observedWorkStart.workStartRevision >= prior.workStartRevision)) {
+        this.retainedWorkStarts.set(threadId, { ...observedWorkStart as {
+          workStartedAt: number; workStartRevision: number
+        }, lastSeenAt: now });
+      }
+      const retained = this.retainedWorkStarts.get(threadId);
+      const workStart = retained && now - retained.lastSeenAt <= WORK_START_RETENTION_MS
+        ? workStartFields(retained)
+        : {};
+      return { threadId, activityAt: activityAt ?? fileActivityAt, ...status, ...workStart };
     }));
     this.trackedSessionPresence = new Map(presence.map((session) => [session.threadId, session]));
     this.recentSessions = recent.map((file) => this.trackedSessionPresence.get(file.threadId)!);
@@ -173,6 +196,15 @@ export class CodexSessionOwnershipIndex {
     const currentIds = new Set(this.trackedSessionPresence.keys());
     for (const threadId of this.acknowledgedCompletions.keys()) {
       if (!currentIds.has(threadId)) this.acknowledgedCompletions.delete(threadId);
+    }
+    for (const [threadId, retained] of this.retainedWorkStarts) {
+      if (now - retained.lastSeenAt > WORK_START_RETENTION_MS) this.retainedWorkStarts.delete(threadId);
+    }
+    if (this.retainedWorkStarts.size > MAX_RETAINED_WORK_STARTS) {
+      const oldest = [...this.retainedWorkStarts.entries()]
+        .sort((left, right) => left[1].lastSeenAt - right[1].lastSeenAt)
+        .slice(0, this.retainedWorkStarts.size - MAX_RETAINED_WORK_STARTS);
+      for (const [threadId] of oldest) this.retainedWorkStarts.delete(threadId);
     }
     this.refreshedAt = now;
   }
@@ -203,7 +235,9 @@ function defaultSessionRoots(): string[] {
 
 async function readRecentSessionStatus(
   path: string
-): Promise<Pick<HostSessionPresence, "status" | "completionRevision" | "contextUsedPercent"> & { activityAt?: number }> {
+): Promise<Pick<HostSessionPresence,
+  "status" | "completionRevision" | "contextUsedPercent" | "workStartedAt" | "workStartRevision"
+> & { activityAt?: number }> {
   try {
     const handle = await open(path, "r");
     try {
@@ -216,6 +250,8 @@ async function readRecentSessionStatus(
       let lifecycle: "working" | "complete" | undefined;
       let completionRevision: number | undefined;
       let activityAt: number | undefined;
+      let workStartedAt: number | undefined;
+      let workStartRevision: number | undefined;
       let lineStart = baseOffset === 0 ? 0 : buffer.indexOf(0x0a) + 1;
       while (lineStart < buffer.length) {
         const newline = buffer.indexOf(0x0a, lineStart);
@@ -229,6 +265,10 @@ async function readRecentSessionStatus(
           const eventType = event.type === "event_msg" ? event.payload?.type : undefined;
           const responseType = event.type === "response_item" ? event.payload?.type : undefined;
           const eventTime = typeof event.timestamp === "string" ? Date.parse(event.timestamp) : NaN;
+          if (eventType === "user_message" && Number.isFinite(eventTime) && eventTime > 0) {
+            workStartedAt = eventTime;
+            workStartRevision = baseOffset + lineStart;
+          }
           if (eventType === "task_started" || eventType === "agent_reasoning" || eventType === "function_call") {
             lifecycle = "working";
             if (Number.isFinite(eventTime)) activityAt = eventTime;
@@ -249,21 +289,32 @@ async function readRecentSessionStatus(
         lineStart = newline + 1;
       }
       const contextUsedPercent = readContextUsedPercent(tail);
+      const workStart = workStartedAt != null && workStartRevision != null
+        ? { workStartedAt, workStartRevision }
+        : {};
       if (lifecycle === "working") return {
         status: "working", ...(activityAt != null ? { activityAt } : {}),
-        ...(contextUsedPercent != null ? { contextUsedPercent } : {})
+        ...(contextUsedPercent != null ? { contextUsedPercent } : {}), ...workStart
       };
       if (lifecycle === "complete" && completionRevision != null) return {
         status: "complete", completionRevision, ...(activityAt != null ? { activityAt } : {}),
-        ...(contextUsedPercent != null ? { contextUsedPercent } : {})
+        ...(contextUsedPercent != null ? { contextUsedPercent } : {}), ...workStart
       };
-      return { status: "idle", ...(contextUsedPercent != null ? { contextUsedPercent } : {}) };
+      return { status: "idle", ...(contextUsedPercent != null ? { contextUsedPercent } : {}), ...workStart };
     } finally {
       await handle.close();
     }
   } catch {
     return { status: "idle" };
   }
+}
+
+function workStartFields(value: {
+  workStartedAt?: number; workStartRevision?: number
+} | undefined): { workStartedAt?: number; workStartRevision?: number } {
+  return value?.workStartedAt != null && value.workStartRevision != null
+    ? { workStartedAt: value.workStartedAt, workStartRevision: value.workStartRevision }
+    : {};
 }
 
 function reconcileOwnedStatus(nativeStatus: string, sessionStatus: HostSessionPresence["status"]): string {

@@ -169,6 +169,59 @@ test("relay snapshot parser bounds and validates host session catalogs", async (
   }), null);
 });
 
+test("relay v1 keeps only valid atomic work-start pairs without rejecting the snapshot", () => {
+  const base = { type: "snapshot", protocol: 1, host, observedAt: 2_000, snapshot: structuredClone(snapshot) };
+  base.snapshot.hostSessions = [{
+    threadId: "00000000-0000-4000-8000-000000000000", activityAt: 1_900,
+    status: "working", workStartedAt: 1_800, workStartRevision: 42
+  }];
+  const parsedBase = parseRelayServerMessage(base);
+  assert.deepEqual(parsedBase?.type === "snapshot" ? parsedBase.snapshot.hostSessions?.[0] : null,
+    base.snapshot.hostSessions[0]);
+
+  for (const invalidPair of [
+    { workStartedAt: undefined, workStartRevision: 42 },
+    { workStartedAt: 1_800, workStartRevision: undefined },
+    { workStartedAt: -1, workStartRevision: 42 },
+    { workStartedAt: Number.POSITIVE_INFINITY, workStartRevision: 42 },
+    { workStartedAt: 2_001, workStartRevision: 42 },
+    { workStartedAt: 1_800, workStartRevision: -1 },
+    { workStartedAt: 1_800, workStartRevision: 1.5 },
+    { workStartedAt: 1_800, workStartRevision: Number.MAX_SAFE_INTEGER + 1 }
+  ]) {
+    const value = structuredClone(base);
+    Object.assign(value.snapshot.hostSessions![0]!, invalidPair);
+    const parsed = parseRelayServerMessage(value);
+    assert.equal(parsed?.type, "snapshot");
+    if (parsed?.type === "snapshot") {
+      assert.equal(parsed.snapshot.hostSessions?.[0]?.workStartedAt, undefined);
+      assert.equal(parsed.snapshot.hostSessions?.[0]?.workStartRevision, undefined);
+    }
+  }
+
+  const oldSender = structuredClone(base);
+  delete oldSender.snapshot.hostSessions![0]!.workStartedAt;
+  delete oldSender.snapshot.hostSessions![0]!.workStartRevision;
+  assert.equal(parseRelayServerMessage(oldSender)?.type, "snapshot");
+
+  const invalidAnnotations = structuredClone(base);
+  Object.assign(invalidAnnotations.snapshot.slots[0]!, { workStartedAt: 1_700 });
+  invalidAnnotations.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: "local:00000000-0000-4000-8000-000000000090",
+    conversationId: "00000000-0000-4000-8000-000000000090",
+    title: "Off six", status: "working", selected: false, catalogIndex: 7,
+    workStartedAt: 2_001, workStartRevision: 8
+  }] };
+  const sanitizedAnnotations = parseRelayServerMessage(invalidAnnotations);
+  assert.equal(sanitizedAnnotations?.type, "snapshot");
+  if (sanitizedAnnotations?.type === "snapshot") {
+    assert.equal(sanitizedAnnotations.snapshot.slots[0]!.workStartedAt, undefined);
+    assert.equal(sanitizedAnnotations.snapshot.slots[0]!.workStartRevision, undefined);
+    assert.equal(sanitizedAnnotations.snapshot.activeCatalog?.candidates[0]?.workStartedAt, undefined);
+    assert.equal(sanitizedAnnotations.snapshot.activeCatalog?.candidates[0]?.workStartRevision, undefined);
+  }
+});
+
 test("relay validates and sanitizes the optional active catalog without disabling the base snapshot", () => {
   const valid = { type: "snapshot", protocol: 1, host, observedAt: 1, snapshot: structuredClone(snapshot) };
   valid.snapshot.activeCatalog = { complete: true, candidates: [{
@@ -230,7 +283,8 @@ test("remote snapshots are normalized to the receiver clock", () => {
   const remote = structuredClone(snapshot);
   remote.hostSessions = [{
     threadId: remote.slots[0]!.threadKey!, activityAt: 970_000,
-    status: "working", completionRevision: undefined
+    status: "working", completionRevision: undefined,
+    workStartedAt: 960_000, workStartRevision: 123
   }];
   remote.usage = {
     windows: [{
@@ -252,9 +306,29 @@ test("remote snapshots are normalized to the receiver clock", () => {
   assert.equal(normalized.observedAt, 1_030_000);
   assert.equal(normalized.snapshot.slots[0]!.activityAt, 1_020_000);
   assert.equal(normalized.snapshot.hostSessions![0]!.activityAt, 1_000_000);
+  assert.equal(normalized.snapshot.hostSessions![0]!.workStartedAt, 990_000);
+  assert.equal(normalized.snapshot.hostSessions![0]!.workStartRevision, 123);
   assert.equal(normalized.snapshot.activeCatalog!.candidates[0]!.activityAt, 1_010_000);
   assert.equal(normalized.snapshot.usage!.observedAt, 1_030_000);
   assert.equal(normalized.snapshot.usage!.windows[0]!.resetsAt, 1_630_000);
+});
+
+test("work-start normalization uses positive and negative clock offsets without changing revision", () => {
+  const remote = structuredClone(snapshot);
+  remote.hostSessions = [{
+    threadId: remote.slots[0]!.threadKey!, activityAt: 1_900, status: "working",
+    workStartedAt: 1_800, workStartRevision: 9
+  }];
+  const ahead = normalizeHostSnapshotAtReceipt({ host, snapshot: remote, observedAt: 2_000 }, 2_500);
+  assert.deepEqual(
+    [ahead.snapshot.hostSessions![0]!.workStartedAt, ahead.snapshot.hostSessions![0]!.workStartRevision],
+    [2_300, 9]
+  );
+  const behind = normalizeHostSnapshotAtReceipt({ host, snapshot: remote, observedAt: 2_000 }, 1_500);
+  assert.deepEqual(
+    [behind.snapshot.hostSessions![0]!.workStartedAt, behind.snapshot.hostSessions![0]!.workStartRevision],
+    [1_300, 9]
+  );
 });
 
 test("clock skew cannot hide a remote owner status or selection", () => {
@@ -407,7 +481,11 @@ test("host session catalogs route a mirror even when the owning host has no nati
   const windowsSnapshot = structuredClone(snapshot);
   macSnapshot.slots[0] = { ...macSnapshot.slots[0]!, threadKey: "40000000-0000-4000-8000-000000000099", status: "idle" };
   windowsSnapshot.slots[0] = { ...windowsSnapshot.slots[0]!, threadKey: shared, title: "Mac-owned task", status: "idle", ownedByHost: false };
-  macSnapshot.hostSessions = [{ threadId: shared, activityAt: 2_000, status: "working" }];
+  macSnapshot.hostSessions = [{
+    threadId: shared, activityAt: 2_000, status: "working",
+    workStartedAt: 1_800, workStartRevision: 7
+  }];
+  Object.assign(windowsSnapshot.slots[0]!, { workStartedAt: 1_999, workStartRevision: 99 });
   const match = new HostActivityIndex().merge([
     { host: windows, snapshot: windowsSnapshot, observedAt: 2_000 },
     { host, snapshot: macSnapshot, observedAt: 2_000 }
@@ -415,6 +493,8 @@ test("host session catalogs route a mirror even when the owning host has no nati
   assert.equal(match?.host.platform, "darwin");
   assert.equal(match?.status, "working");
   assert.equal(match?.title, "Mac-owned task");
+  assert.equal(match?.workStartedAt, 1_800);
+  assert.equal(match?.workStartRevision, 7);
 });
 
 test("host session catalogs return a Mac-only cloud mirror to its Windows owner", () => {
@@ -431,6 +511,40 @@ test("host session catalogs return a Mac-only cloud mirror to its Windows owner"
   ], 2_000, windows.hostId).find((slot) => slot.threadKey === shared);
   assert.equal(match?.host.platform, "win32");
   assert.equal(match?.status, "working");
+});
+
+test("tracked off-six owner annotations keep work-start metadata without lending it to aliases", () => {
+  const windows: CodexHost = {
+    hostId: "11111111-1111-4111-8111-111111111111", hostName: "Windows", platform: "win32"
+  };
+  const shared = "00000000-0000-4000-8000-000000000091";
+  const windowsSnapshot = structuredClone(snapshot);
+  const macSnapshot = structuredClone(snapshot);
+  windowsSnapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: `remote:${shared}`, conversationId: shared, title: "Mirror", status: "working",
+    selected: false, catalogIndex: 7, ownedByHost: false,
+    workStartedAt: 1_999, workStartRevision: 99
+  }] };
+  macSnapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: `local:${shared}`, conversationId: shared, title: null, status: "working",
+    selected: false, catalogIndex: 129, ownedByHost: true,
+    workStartedAt: 1_800, workStartRevision: 7
+  }] };
+  const match = new HostActivityIndex().mergeActiveCatalog([
+    { host: windows, snapshot: windowsSnapshot, observedAt: 2_000 },
+    { host, snapshot: macSnapshot, observedAt: 2_000 }
+  ], 2_000, windows.hostId).find((slot) => slot.conversationId === shared);
+  assert.equal(match?.workStartedAt, 1_800);
+  assert.equal(match?.workStartRevision, 7);
+
+  macSnapshot.activeCatalog!.candidates[0]!.threadKey = `local:client-new-thread:${shared}`;
+  delete macSnapshot.activeCatalog!.candidates[0]!.conversationId;
+  const temporary = new HostActivityIndex().mergeActiveCatalog([
+    { host: windows, snapshot: windowsSnapshot, observedAt: 2_000 },
+    { host, snapshot: macSnapshot, observedAt: 2_000 }
+  ], 2_000, windows.hostId).find((slot) => slot.threadKey?.includes("client-new-thread"));
+  assert.equal(temporary?.workStartedAt, undefined);
+  assert.equal(temporary?.workStartRevision, undefined);
 });
 
 test("temporary Windows new-thread keys merge with a titleless session-backed Mac mirror", () => {
@@ -939,6 +1053,22 @@ test("relay snapshot wire encoding keeps an active catalog that fits", () => {
   const decoded = JSON.parse(encodeRelaySnapshotMessage(message)) as RelaySnapshotMessage;
 
   assert.deepEqual(decoded.snapshot.activeCatalog, normal.activeCatalog);
+});
+
+test("relay snapshot wire encoding preserves content-free work-start metadata within budget", () => {
+  const normal = structuredClone(snapshot);
+  normal.hostSessions = Array.from({ length: 128 }, (_, index) => ({
+    threadId: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    activityAt: 2_000, status: "working" as const,
+    workStartedAt: 1_000 + index, workStartRevision: index
+  }));
+  const encoded = encodeRelaySnapshotMessage({
+    type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host, observedAt: 2_000, snapshot: normal
+  });
+  const decoded = JSON.parse(encoded) as RelaySnapshotMessage;
+  assert.ok(Buffer.byteLength(encoded, "utf8") <= 64 * 1024);
+  assert.equal(decoded.snapshot.hostSessions?.[127]?.workStartedAt, 1_127);
+  assert.equal(decoded.snapshot.hostSessions?.[127]?.workStartRevision, 127);
 });
 
 test("relay snapshot wire encoding rejects an oversized base snapshot", () => {

@@ -21,6 +21,10 @@ export type MicroAgentSlot = {
   ownedByHost?: boolean;
   /** Percentage of the current model context window consumed by this task. */
   contextUsedPercent?: number;
+  /** Timestamp of the latest structural user_message; no message content is exposed. */
+  workStartedAt?: number;
+  /** Byte offset of the same structural user_message record. */
+  workStartRevision?: number;
 };
 
 export type MicroAgentCandidate = {
@@ -37,6 +41,8 @@ export type MicroAgentCandidate = {
   nativeSlot?: 0 | 1 | 2 | 3 | 4 | 5;
   ownedByHost?: boolean;
   contextUsedPercent?: number;
+  workStartedAt?: number;
+  workStartRevision?: number;
 };
 
 export type MicroActionSlot = "ACT06" | "ACT07" | "ACT08" | "ACT09" | "ACT10_ACT11" | "ACT12";
@@ -57,6 +63,10 @@ export type HostSessionPresence = {
   completionRevision?: number;
   /** Content-free context utilization derived from the latest structural token-count event. */
   contextUsedPercent?: number;
+  /** Timestamp of the latest structural user_message; paired atomically with workStartRevision. */
+  workStartedAt?: number;
+  /** Byte offset of the same structural user_message record. */
+  workStartRevision?: number;
 };
 
 export type UsageWindow = {

@@ -74,6 +74,96 @@ test("current response_item records keep a long-running Codex task working after
   }
 });
 
+test("only structural user_message records advance the content-free work-start pair", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-work-start-"));
+  try {
+    const threadId = "10000000-0000-4000-8000-000000000011";
+    const path = join(root, `rollout-now-${threadId}.jsonl`);
+    const first = '{"timestamp":"2026-07-21T20:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"private"}}\n';
+    await writeFile(path, first +
+      '{"timestamp":"2026-07-21T20:00:01.000Z","type":"event_msg","payload":{"type":"task_started"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:02.000Z","type":"event_msg","payload":{"type":"agent_reasoning"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:03.000Z","type":"event_msg","payload":{"type":"thread_name_updated"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant"}}\n');
+    const index = new CodexSessionOwnershipIndex([root], 0);
+    let annotated = await index.annotate(snapshotFor(threadId, true), Date.parse("2026-07-21T20:00:05.000Z"));
+    let session = annotated.hostSessions?.find((candidate) => candidate.threadId === threadId);
+    assert.equal(session?.workStartedAt, Date.parse("2026-07-21T20:00:00.000Z"));
+    assert.equal(session?.workStartRevision, 0);
+    assert.equal(annotated.slots[0]!.workStartedAt, session?.workStartedAt);
+    assert.equal(annotated.slots[0]!.workStartRevision, session?.workStartRevision);
+
+    const second = '{"timestamp":"2026-07-21T20:01:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"more private"}}\n';
+    await appendFile(path, second);
+    annotated = await index.annotate(snapshotFor(threadId, false), Date.parse("2026-07-21T20:01:01.000Z"));
+    session = annotated.hostSessions?.find((candidate) => candidate.threadId === threadId);
+    assert.equal(session?.workStartedAt, Date.parse("2026-07-21T20:01:00.000Z"));
+    assert.equal(session?.workStartRevision, Buffer.byteLength(first +
+      '{"timestamp":"2026-07-21T20:00:01.000Z","type":"event_msg","payload":{"type":"task_started"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:02.000Z","type":"event_msg","payload":{"type":"agent_reasoning"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:03.000Z","type":"event_msg","payload":{"type":"thread_name_updated"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant"}}\n'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("work-start retention survives tail rollover only in the observing process", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-work-start-tail-"));
+  try {
+    const threadId = "10000000-0000-4000-8000-000000000012";
+    const path = join(root, `rollout-now-${threadId}.jsonl`);
+    const startedAt = Date.parse("2026-07-21T20:00:00.000Z");
+    await writeFile(path,
+      '{"timestamp":"2026-07-21T20:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"private"}}\n' +
+      '{"timestamp":"2026-07-21T20:00:01.000Z","type":"event_msg","payload":{"type":"task_started"}}\n');
+    const index = new CodexSessionOwnershipIndex([root], 0);
+    let annotated = await index.annotate(snapshotFor(threadId, false), startedAt + 2_000);
+    assert.equal(annotated.hostSessions?.find((session) => session.threadId === threadId)?.workStartedAt, startedAt);
+
+    await appendFile(path, `${"x".repeat(520 * 1024)}\n` +
+      '{"timestamp":"2026-07-21T20:01:00.000Z","type":"response_item","payload":{"type":"reasoning"}}\n');
+    annotated = await index.annotate(snapshotFor(threadId, false), startedAt + 61_000);
+    const retained = annotated.hostSessions?.find((session) => session.threadId === threadId);
+    assert.deepEqual(
+      { workStartedAt: retained?.workStartedAt, workStartRevision: retained?.workStartRevision },
+      { workStartedAt: startedAt, workStartRevision: 0 }
+    );
+
+    const expired = await index.annotate(
+      snapshotFor(threadId, false), startedAt + 61_001 + 24 * 60 * 60_000);
+    assert.equal(expired.hostSessions?.find((session) => session.threadId === threadId)?.workStartedAt, undefined);
+
+    const cold = await new CodexSessionOwnershipIndex([root], 0)
+      .annotate(snapshotFor(threadId, false), startedAt + 62_000);
+    const coldSession = cold.hostSessions?.find((session) => session.threadId === threadId);
+    assert.equal(coldSession?.workStartedAt, undefined);
+    assert.equal(coldSession?.workStartRevision, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("tracked off-six catalog candidates receive the exact owner's work-start pair", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-work-start-catalog-"));
+  try {
+    const threadId = "10000000-0000-4000-8000-000000000013";
+    await writeFile(join(root, `rollout-now-${threadId}.jsonl`),
+      '{"timestamp":"2026-07-21T20:00:00.000Z","type":"event_msg","payload":{"type":"user_message"}}\n');
+    const value = snapshot();
+    value.activeCatalog = { complete: true, candidates: [{
+      threadKey: `local:${threadId}`, conversationId: threadId, title: "Off six",
+      status: "working", selected: false, catalogIndex: 9
+    }] };
+    const annotated = await new CodexSessionOwnershipIndex([root], 0)
+      .annotate(value, Date.parse("2026-07-21T20:00:01.000Z"));
+    assert.equal(annotated.activeCatalog?.candidates[0]?.workStartedAt, Date.parse("2026-07-21T20:00:00.000Z"));
+    assert.equal(annotated.activeCatalog?.candidates[0]?.workStartRevision, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an old completion uses its event timestamp and cannot flash as newly complete after a file touch", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-deck-stale-completion-"));
   try {
