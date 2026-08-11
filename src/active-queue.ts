@@ -41,7 +41,11 @@ export function projectActiveQueue(
     })
     .sort(compareCandidates)
     .slice(0, 6)
-    .map(({ slot }, id) => ({ ...slot, id }));
+    .map(({ slot }, id) => ({
+      ...slot,
+      id,
+      sourceSlot: slot.catalogIndex != null && slot.nativeSlot == null ? id : slot.sourceSlot
+    }));
 }
 
 function queueGroup(status: string): number | null {
@@ -61,7 +65,8 @@ function compareCandidates(left: QueueCandidate, right: QueueCandidate): number 
       ? right.activityAt - left.activityAt
       : left.activityAt - right.activityAt;
   }
-  return left.slot.sourceSlot - right.slot.sourceSlot ||
+  return (left.slot.catalogIndex ?? left.slot.sourceSlot) - (right.slot.catalogIndex ?? right.slot.sourceSlot) ||
+    left.slot.sourceSlot - right.slot.sourceSlot ||
     compareText(left.identity, right.identity) ||
     compareText(left.slot.host.hostId, right.slot.host.hostId);
 }

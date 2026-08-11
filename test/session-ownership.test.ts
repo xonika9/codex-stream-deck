@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -199,6 +199,90 @@ test("owned rollout lifecycle clears stale native working and unread colors", as
     const active = await index.annotate(value, Date.now() + 1);
     assert.equal(active.hostSessions?.find((session) => session.threadId === threadId)?.status, "idle");
     assert.equal(active.slots[0]!.status, "idle");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("catalog ownership uses only trusted conversation ids and selected catalog tasks acknowledge completion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-catalog-ownership-"));
+  try {
+    const conversationId = "10000000-0000-4000-8000-000000000088";
+    const temporarySuffix = "10000000-0000-4000-8000-000000000089";
+    await writeFile(join(root, `rollout-now-${conversationId}.jsonl`),
+      '{"type":"event_msg","payload":{"type":"task_complete"}}\n');
+    await writeFile(join(root, `rollout-now-${temporarySuffix}.jsonl`),
+      '{"type":"event_msg","payload":{"type":"task_complete"}}\n');
+    const index = new CodexSessionOwnershipIndex([root], 0);
+    const value = snapshot();
+    value.activeCatalog = { complete: true, candidates: [
+      { threadKey: `local:${conversationId}`, conversationId, title: "Owned", status: "unread", selected: true, catalogIndex: 7 },
+      { threadKey: `local:client-new-thread:${temporarySuffix}`, title: "Temporary", status: "working", selected: true, catalogIndex: 8 }
+    ] };
+
+    const annotated = await index.annotate(value, Date.now());
+    assert.equal(annotated.activeCatalog!.candidates[0]!.ownedByHost, true);
+    assert.equal(annotated.activeCatalog!.candidates[0]!.status, "idle");
+    assert.equal(annotated.activeCatalog!.candidates[1]!.ownedByHost, false);
+    assert.equal(annotated.hostSessions!.find((session) => session.threadId === temporarySuffix)!.status, "complete");
+    index.markOpened(`local:client-new-thread:${temporarySuffix}`, null);
+    const afterDirectOpen = await index.annotate(value, Date.now() + 1);
+    assert.equal(afterDirectOpen.hostSessions!.find((session) => session.threadId === temporarySuffix)!.status, "complete");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing tracked catalog identity is negatively cached until the planned refresh", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-negative-cache-"));
+  try {
+    const index = new CodexSessionOwnershipIndex([root], 60_000);
+    const internal = index as unknown as {
+      refresh: (now: number, tracked: Set<string>) => Promise<void>;
+    };
+    const originalRefresh = internal.refresh.bind(index);
+    let scans = 0;
+    internal.refresh = async (now, tracked) => {
+      scans += 1;
+      await originalRefresh(now, tracked);
+    };
+    const value = snapshot();
+    value.activeCatalog = { complete: true, candidates: [{
+      threadKey: "remote:10000000-0000-4000-8000-000000000090",
+      conversationId: "10000000-0000-4000-8000-000000000090",
+      title: "Remote only", status: "working", selected: false, catalogIndex: 0
+    }] };
+
+    await index.annotate(value, 1_000);
+    await index.annotate(value, 1_001);
+    assert.equal(scans, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a tracked old session outside the public recent 128 is still read for catalog annotation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-tracked-old-"));
+  try {
+    const trackedId = "20000000-0000-4000-8000-000000000000";
+    const trackedPath = join(root, `rollout-old-${trackedId}.jsonl`);
+    await writeFile(trackedPath, '{"type":"event_msg","payload":{"type":"task_started"}}\n');
+    await utimes(trackedPath, new Date(1_000), new Date(1_000));
+    for (let index = 1; index <= 129; index += 1) {
+      const id = `20000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+      await writeFile(join(root, `rollout-new-${id}.jsonl`), "{}\n");
+    }
+    const value = snapshot();
+    value.activeCatalog = { complete: true, candidates: [{
+      threadKey: `local:${trackedId}`, conversationId: trackedId,
+      title: "Tracked old", status: "unread", selected: false, catalogIndex: 129
+    }] };
+
+    const annotated = await new CodexSessionOwnershipIndex([root], 60_000).annotate(value, Date.now());
+    assert.equal(annotated.hostSessions?.length, 128);
+    assert.equal(annotated.hostSessions?.some((session) => session.threadId === trackedId), false);
+    assert.equal(annotated.activeCatalog?.candidates[0]?.ownedByHost, true);
+    assert.equal(annotated.activeCatalog?.candidates[0]?.status, "working");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

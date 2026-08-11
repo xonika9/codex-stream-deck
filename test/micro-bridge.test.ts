@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext, runInNewContext, type Context } from "node:vm";
+import {
+  ACTIVE_CATALOG_RETRY_DELAY_MS,
+  buildActiveCatalogDiscoveryExpression,
+  buildSnapshotPayloadExpression
+} from "../src/codex-active-catalog-expression.js";
 import {
   buildEnsureThreadActivatedExpression, canonicalThreadId, CodexMicroRendererBridge, nativeActionKey, REASONING_ENCODER_KEYS, resolveAgentDispatch,
   retainEvaluationPromise, selectCodexMainTarget, selectSidebarThreadId, threadKeysEquivalent
@@ -30,7 +35,9 @@ test("official keycap SVG contents are not bundled in the public source", async 
 });
 
 test("renderer bridge uses native Micro events and discovers hashed modules at runtime", async () => {
-  const source = await readFile(new URL("../src/codex-micro-renderer-bridge.ts", import.meta.url), "utf8");
+  const bridgeSource = await readFile(new URL("../src/codex-micro-renderer-bridge.ts", import.meta.url), "utf8");
+  const catalogSource = await readFile(new URL("../src/codex-active-catalog-expression.ts", import.meta.url), "utf8");
+  const source = `${bridgeSource}\n${catalogSource}`;
   for (const eventName of ["codex-micro-device-state-changed", "codex-micro-hid-event", "codex-micro-joystick-event"]) {
     assert.match(source, new RegExp(eventName));
   }
@@ -44,10 +51,213 @@ test("renderer bridge uses native Micro events and discovers hashed modules at r
   assert.match(source, /data-above-composer-conversation-id/);
   assert.match(source, /data-app-action-sidebar-thread-active/);
   assert.match(source, /directSettingReader/);
+  assert.match(source, /app-initial-/);
+  assert.match(source, /allSidebarThreadKeys/);
+  assert.match(source, /pinnedThreadKeys/);
+  assert.match(source, /unpinnedThreadKeys/);
+  assert.match(source, /threadAttentionStateByKey/);
+  assert.match(source, /threadRecencyAtByKey/);
+  assert.match(source, /threadRuntimeStatus/);
+  assert.match(source, /hasUnreadTurn/);
+  assert.match(source, /task_status_display/);
+  assert.match(source, /latest_turn_status_display/);
+  assert.match(source, /has_unread_turn/);
+  assert.match(source, /task\?\.conversation_id \?\? task\?\.id/);
+  assert.match(source, /family\.resolve\(found\.node, found\.chain, key\)/);
+  assert.match(source, /codex-deck-active-catalog-resolvers/);
+  assert.match(source, /allSidebarResolver/);
+  assert.match(source, /readableFamily/);
+  assert.match(source, /resolverCache\.taskFamily/);
+  assert.match(source, /retryAt: Date\.now\(\)/);
+  assert.match(source, /const remoteTaskStatus =/);
+  assert.match(source, /TextEncoder/);
   assert.match(source, /get-setting/);
   assert.match(source, /found\.node\.store\.get\.bind\(found\.node\.store\)/);
   assert.doesNotMatch(source, /candidate\?\.token === appScope/);
   assert.doesNotMatch(source, /D90_rd6W|SFcKxWqG|DJFcGyy5/);
+  assert.ok(bridgeSource.split("\n").length < 1000, "renderer bridge should keep catalog discovery extracted");
+});
+
+type CatalogHarness = {
+  context: Context & Record<string | symbol, unknown>;
+  descriptors: Map<string, unknown>;
+  descriptorCalls: string[];
+  setKeys: (keys: string[]) => void;
+  setNamespace: (namespace: Record<string, unknown>) => void;
+  useValidNamespace: () => void;
+  poll: () => Promise<Record<string, unknown>>;
+};
+
+const catalogKey = (index: number): string =>
+  `local:10000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+
+function createCatalogHarness(initialKeys: string[]): CatalogHarness {
+  const descriptorCalls: string[] = [];
+  const descriptors = new Map<string, unknown>();
+  const state = {
+    allSidebar: { allSidebarThreadKeys: [] as string[], pinnedThreadKeys: [] as string[], unpinnedThreadKeys: [] as string[] },
+    readable: { threadKeys: [] as string[], threadAttentionStateByKey: new Map(), threadRecencyAtByKey: new Map() }
+  };
+  const atoms = new Map<unknown, unknown>();
+  const allSidebarResolver = { resolve: () => "all-sidebar", createSubscriberAtom: () => null };
+  const readableFamily = {
+    resolve: (_node: unknown, _chain: unknown, key: string) => ({ resolve: () => key === "codex" ? "readable" : "missing" })
+  };
+  const taskFamily = {
+    resolve: (_node: unknown, _chain: unknown, key: string) => {
+      if (key !== "codex") descriptorCalls.push(key);
+      return { resolve: () => `task:${key}` };
+    }
+  };
+  const validNamespace: Record<string, unknown> = { allSidebarResolver, readableFamily, taskFamily };
+  let namespace = validNamespace;
+  let loaderCalls = 0;
+  const context = createContext({
+    TextEncoder,
+    Symbol,
+    Map,
+    Set,
+    Date: { now: () => context.now },
+    now: 1_000,
+    urls: ["app://-/assets/app-initial-a.js"],
+    slots: Array.from({ length: 6 }, (_, id) => ({
+      id, threadKey: null, title: `Native ${id}`, status: "idle", selected: false
+    })),
+    loadModule: async () => { loaderCalls += 1; return namespace; },
+    get loaderCalls() { return loaderCalls; },
+    storeGet: (atom: unknown) => {
+      if (atom === "all-sidebar") return state.allSidebar;
+      if (atom === "readable") return state.readable;
+      if (typeof atom === "string" && atom.startsWith("task:")) return descriptors.get(atom.slice(5));
+      return atoms.get(atom);
+    }
+  }) as Context & Record<string | symbol, unknown>;
+
+  const setKeys = (keys: string[]): void => {
+    state.allSidebar = {
+      allSidebarThreadKeys: [...keys],
+      pinnedThreadKeys: keys.slice(0, 1),
+      unpinnedThreadKeys: keys.slice(1)
+    };
+    state.readable = {
+      threadKeys: [...keys],
+      threadAttentionStateByKey: new Map(keys.map((key, index) => [key, index === 1 ? "waiting" : "idle"])),
+      threadRecencyAtByKey: new Map(keys.map((key, index) => [key, 1_000 + index]))
+    };
+    descriptors.clear();
+    for (const [index, key] of keys.entries()) {
+      descriptors.set(key, {
+        kind: "local", key,
+        conversation: { id: key.slice(-36), title: `Task ${index}`, threadRuntimeStatus: { type: index === 0 ? "active" : "idle" } }
+      });
+    }
+  };
+  setKeys(initialKeys);
+
+  const expression = `(async () => {
+    const urls = globalThis.urls;
+    const found = { node: { store: { get: globalThis.storeGet } }, chain: new Map() };
+    const slots = globalThis.slots;
+    const toEpoch = (value) => typeof value === 'number' ? value : undefined;
+    ${buildActiveCatalogDiscoveryExpression("(url) => globalThis.loadModule(url)")}
+    return ${buildSnapshotPayloadExpression("{ slots, marker: 'base-six' }")};
+  })()`;
+
+  return {
+    context,
+    descriptors,
+    descriptorCalls,
+    setKeys,
+    setNamespace: (value) => { namespace = value; },
+    useValidNamespace: () => { namespace = validNamespace; },
+    poll: () => runInContext(expression, context) as Promise<Record<string, unknown>>
+  };
+}
+
+test("active catalog discovery executes semantic normalization and preserves native status priority", async () => {
+  const keys = [catalogKey(1), catalogKey(2), catalogKey(3)];
+  const harness = createCatalogHarness(keys);
+  const result = await harness.poll() as { activeCatalog?: { complete: boolean; candidates: Array<Record<string, unknown>> } };
+
+  assert.equal(result.activeCatalog?.complete, true);
+  assert.deepEqual(Array.from(result.activeCatalog?.candidates ?? [], ({ threadKey }) => threadKey), [keys[1], keys[0], keys[2]]);
+  assert.equal(result.activeCatalog?.candidates[0]?.status, "awaiting-response");
+  assert.equal(result.activeCatalog?.candidates[1]?.status, "working");
+});
+
+test("more than 256 exact keys fail closed before per-key descriptor resolution", async () => {
+  const harness = createCatalogHarness(Array.from({ length: 257 }, (_, index) => catalogKey(index)));
+  const result = await harness.poll() as { slots: unknown[]; activeCatalog?: unknown; marker?: string };
+
+  assert.equal(result.activeCatalog, undefined);
+  assert.equal(result.slots.length, 6);
+  assert.equal(result.marker, "base-six");
+  assert.equal(harness.descriptorCalls.length, 0);
+  const cache = harness.context[Symbol.for("codex-deck-active-catalog-resolvers")] as { failure?: boolean };
+  assert.notEqual(cache.failure, true, "live catalog size must not poison semantic resolver discovery");
+  harness.setKeys([catalogKey(1)]);
+  assert.ok((await harness.poll()).activeCatalog, "a smaller next poll should be reconsidered immediately");
+});
+
+test("resolver incompatibility is negatively cached, then URL changes retry immediately", async () => {
+  const harness = createCatalogHarness([catalogKey(1)]);
+  harness.setNamespace({ incompatible: true });
+
+  await harness.poll();
+  await harness.poll();
+  assert.equal(harness.context.loaderCalls, 1, "same URL should respect the retry deadline");
+
+  harness.context.urls = ["app://-/assets/app-initial-b.js"];
+  await harness.poll();
+  assert.equal(harness.context.loaderCalls, 2, "a new app bundle must invalidate the failure immediately");
+});
+
+test("resolver failure retries after the deadline and success clears the failure entry", async () => {
+  const key = catalogKey(1);
+  const harness = createCatalogHarness([key]);
+  harness.setNamespace({ incompatible: true });
+  await harness.poll();
+
+  harness.context.now = 1_000 + ACTIVE_CATALOG_RETRY_DELAY_MS;
+  harness.useValidNamespace();
+  const result = await harness.poll() as { activeCatalog?: unknown };
+
+  assert.ok(result.activeCatalog);
+  const cache = harness.context[Symbol.for("codex-deck-active-catalog-resolvers")] as { failure?: boolean };
+  assert.notEqual(cache.failure, true);
+});
+
+test("a transient descriptor miss omits one poll, retains success cache, and retries immediately", async () => {
+  const keys = [catalogKey(1), catalogKey(2)];
+  const harness = createCatalogHarness(keys);
+  assert.ok((await harness.poll()).activeCatalog);
+  const cacheKey = Symbol.for("codex-deck-active-catalog-resolvers");
+  const successCache = harness.context[cacheKey];
+
+  harness.descriptors.delete(keys[1]!);
+  const missed = await harness.poll() as { slots: unknown[]; activeCatalog?: unknown };
+  assert.equal(missed.activeCatalog, undefined);
+  assert.equal(missed.slots.length, 6);
+  assert.equal(harness.context[cacheKey], successCache);
+
+  harness.descriptors.set(keys[1]!, {
+    kind: "local", key: keys[1], conversation: { id: keys[1]!.slice(-36), title: "Restored" }
+  });
+  assert.ok((await harness.poll()).activeCatalog, "next poll should retry without resolver backoff");
+});
+
+test("64 KiB snapshot budget omits the optional catalog without truncating the base snapshot", async () => {
+  const keys = Array.from({ length: 256 }, (_, index) => catalogKey(index));
+  const harness = createCatalogHarness(keys);
+  for (const [key, descriptor] of harness.descriptors) {
+    (descriptor as { conversation: { title: string } }).conversation.title = "🚀".repeat(120);
+    harness.descriptors.set(key, descriptor);
+  }
+  const result = await harness.poll() as { slots: unknown[]; marker?: string; activeCatalog?: unknown };
+
+  assert.equal(result.activeCatalog, undefined);
+  assert.equal(result.marker, "base-six");
+  assert.equal(result.slots.length, 6);
 });
 
 test("renderer bridge prefers the main index document over macOS avatar surfaces", () => {
@@ -190,8 +400,38 @@ test("agent routing follows the stable thread identity when a cross-host slot is
   });
   const offDeckThread = "local:10000000-0000-4000-8000-000000000099";
   assert.deepEqual(resolveAgentDispatch(snapshot, 2, offDeckThread), {
-    kind: "direct", threadKey: offDeckThread
+    kind: "direct", slot: 2, threadKey: offDeckThread
   });
+});
+
+test("direct off-six dispatch sends the exact native thread key and release remains a no-op", async () => {
+  const bridge = new CodexMicroRendererBridge(() => {});
+  const base = {
+    slots: Array.from({ length: 6 }, (_, id) => ({
+      id, threadKey: `local:00000000-0000-4000-8000-00000000000${id}`,
+      title: `Task ${id}`, status: "idle", selected: false
+    })),
+    layout: { version: 1, slots: {
+      ACT06: { keycapId: "FAST" }, ACT07: { keycapId: "APPR" }, ACT08: { keycapId: "REJ" },
+      ACT09: { keycapId: "SPLIT" }, ACT10_ACT11: { keycapId: "CODEX" }, ACT12: { keycapId: "CODEX" }
+    }, analogStick: { up: {}, right: {}, down: {}, left: {} } },
+    agentSource: "recent", lightingAutoOff: "3-minutes", theme: "dark"
+  } as MicroSnapshot;
+  const events: unknown[] = [];
+  const internal = bridge as unknown as {
+    refresh: () => Promise<MicroSnapshot>;
+    dispatch: (type: string, payload: object, handler: string) => Promise<void>;
+    ensureThreadActivated: () => Promise<void>;
+  };
+  internal.refresh = async () => base;
+  internal.dispatch = async (_type, payload) => { events.push(payload); };
+  internal.ensureThreadActivated = async () => { throw new Error("DOM fallback must not run"); };
+  const exact = "local:client-new-thread:10000000-0000-4000-8000-000000000099";
+
+  await bridge.sendAgent(5, 1, exact);
+  await bridge.sendAgent(5, 0, exact);
+
+  assert.deepEqual(events, [{ event: { key: "AG05", act: 1, slot: 5, threadKey: exact } }]);
 });
 
 test("reasoning controls use the official native encoder rotation events", async () => {

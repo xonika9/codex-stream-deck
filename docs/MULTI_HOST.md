@@ -7,7 +7,7 @@ Stream Deck -> Windows plugin -> local Windows Codex
                            \-> authenticated relay -> local Mac Codex
 ```
 
-The relay never exposes Chrome DevTools. It forwards only typed Codex Deck commands, six native agent snapshots, and a bounded content-free local task-presence catalog.
+The relay never exposes Chrome DevTools. It forwards only typed Codex Deck commands, six native agent snapshots, an optional bounded native sidebar catalog, and a bounded content-free local task-presence catalog.
 
 ## Before pairing
 
@@ -93,11 +93,11 @@ This makes manual mixed layouts possible without another settings application. A
 
 ### Active queue compatibility
 
-The optional **Active queue** setting is applied only after the normal single-host or multi-host list above has been routed, de-duplicated, and assigned to its owning desktop. It therefore filters at most the current six routed candidates; it does not search either Codex app for tasks outside those slots. Host badges, source slots, owner routing, and key-down/key-up identity remain attached when a task moves to a compacted display position. Turning the option off restores the exact agent-source layout described above.
+The optional **Active queue** setting pools the complete native pinned + unpinned sidebar catalog from each host, then de-duplicates trusted conversation mirrors and routes each result to a host that has that exact dispatch key. It projects only the first six relevant tasks after this full-catalog merge. If one host cannot provide the optional catalog, that host falls back to its six Micro slots; an authoritative empty catalog contributes nothing. Host badges, transport-slot hints, owner routing, and key-down/key-up identity remain attached when a task moves to a compacted display position. Turning the option off restores the exact agent-source layout described above.
 
-Use Codex **Most recent chats** for the most useful candidate set. Native **Priority chats** can supply six idle slots while hiding a working task outside the six. The queue deliberately hides those idle candidates and cannot recover the omitted work, so all Agent positions can be healthy and black. These black positions are no-op; host `CONNECT`, `DEGRADED`, and `OFFLINE` diagnostics are still shown.
+The full catalog includes both pinned and unpinned native sidebar tasks, so a working task can reach the queue even when it is outside the current six Micro slots. `custom` remains limited to its six explicitly assigned native candidates, and the queue may compact the relevant ones. Healthy black positions are no-op; host `CONNECT`, `DEGRADED`, and `OFFLINE` diagnostics are still shown.
 
-Place logical **Agent 1** through **Agent N** contiguously on a profile with N Agent buttons. While the queue is enabled, attention/errors come first, then completion/unread tasks in FIFO order when activity times are available, then working tasks by recency. Idle chats are unavailable from the Agent buttons. Pinned and Individual/custom modes still choose the upstream candidate set, but their fixed positions are compacted and may move.
+Place logical **Agent 1** through **Agent N** contiguously on a profile with N Agent buttons. While the queue is enabled, attention/errors come first, then completion/unread tasks in FIFO order when activity times are available, then working tasks by recency. Idle chats are unavailable from the Agent buttons. Pinned and unpinned tasks participate in the full catalog; Individual/custom keeps its configured candidate set instead of expanding to that catalog.
 
 ### Ownership and SSH mirrors
 

@@ -23,6 +23,22 @@ export type MicroAgentSlot = {
   contextUsedPercent?: number;
 };
 
+export type MicroAgentCandidate = {
+  /** Exact renderer dispatch key; never replace it with a cross-host alias. */
+  threadKey: string;
+  /** Trusted backing local conversation identity, when the renderer exposes one. */
+  conversationId?: string;
+  title: string | null;
+  status: string;
+  selected: boolean;
+  activityAt?: number;
+  catalogIndex: number;
+  /** Native Micro transport hint when this candidate is also in the six-slot set. */
+  nativeSlot?: 0 | 1 | 2 | 3 | 4 | 5;
+  ownedByHost?: boolean;
+  contextUsedPercent?: number;
+};
+
 export type MicroActionSlot = "ACT06" | "ACT07" | "ACT08" | "ACT09" | "ACT10_ACT11" | "ACT12";
 export type MicroDirection = "up" | "right" | "down" | "left";
 export type ReasoningAdjustment = "decrease" | "increase";
@@ -61,6 +77,8 @@ export type UsageSnapshot = {
 
 export type MicroSnapshot = {
   slots: MicroAgentSlot[];
+  /** Authoritative full renderer catalog. Undefined means fall back to the six native slots. */
+  activeCatalog?: { complete: true; candidates: MicroAgentCandidate[] };
   /** Task currently open in the Codex renderer, even when it is outside the six native Micro slots. */
   activeThreadKey?: string;
   /** User-visible title for the active task, including tasks outside the six Micro slots. */
@@ -85,5 +103,9 @@ export type CodexHost = {
 export type RoutedAgentSlot = MicroAgentSlot & {
   host: CodexHost;
   sourceSlot: number;
+  /** Physical native slot when the task belongs to the host's six-slot set. */
+  nativeSlot?: 0 | 1 | 2 | 3 | 4 | 5;
   observedAt: number;
+  conversationId?: string;
+  catalogIndex?: number;
 };

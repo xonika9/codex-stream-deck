@@ -10,8 +10,10 @@ const COMPLETION_FRESHNESS_MS = 5 * 60_000;
 export class CodexSessionOwnershipIndex {
   private sessionIds = new Set<string>();
   private recentSessions: HostSessionPresence[] = [];
+  private trackedSessionPresence = new Map<string, HostSessionPresence>();
   private acknowledgedCompletions = new Map<string, number>();
   private contextParsedSessions = new Set<string>();
+  private attemptedContextSessions = new Set<string>();
   private refreshedAt = 0;
   private refreshInFlight?: Promise<void>;
 
@@ -26,32 +28,51 @@ export class CodexSessionOwnershipIndex {
       .filter((sessionId): sessionId is string => sessionId != null));
     const activeSessionId = sessionIdFromThreadKey(snapshot.activeThreadKey ?? null);
     if (activeSessionId) trackedSessions.add(activeSessionId);
+    for (const candidate of snapshot.activeCatalog?.candidates ?? []) {
+      if (candidate.conversationId && candidate.status !== "idle" && candidate.status !== "off") {
+        trackedSessions.add(candidate.conversationId.toLowerCase());
+      }
+    }
     await this.refreshIfNeeded(now, trackedSessions);
     const selectedSessions = new Set(snapshot.slots
       .filter((slot) => slot.selected)
       .map((slot) => sessionIdFromThreadKey(slot.threadKey))
       .filter((sessionId): sessionId is string => sessionId != null));
     if (activeSessionId) selectedSessions.add(activeSessionId);
-    for (const session of this.recentSessions) {
+    for (const candidate of snapshot.activeCatalog?.candidates ?? []) {
+      if (candidate.selected && candidate.conversationId) selectedSessions.add(candidate.conversationId.toLowerCase());
+    }
+    for (const session of this.trackedSessionPresence.values()) {
       if (session.status === "complete" && session.completionRevision != null && selectedSessions.has(session.threadId)) {
         this.acknowledgedCompletions.set(session.threadId, session.completionRevision);
       }
     }
-    const visibleSessions = new Map(this.recentSessions.map((session) => {
-      const completionIsAcknowledged = session.status === "complete" && session.completionRevision != null &&
-        this.acknowledgedCompletions.get(session.threadId) === session.completionRevision;
-      const completionIsStale = session.status === "complete" && now - session.activityAt > COMPLETION_FRESHNESS_MS;
-      return [session.threadId, {
-        ...session,
-        status: completionIsAcknowledged || completionIsStale ? "idle" as const : session.status
-      }];
-    }));
+    const allVisibleSessions = new Map([...this.trackedSessionPresence.values()].map((session) =>
+      [session.threadId, this.visibleSession(session, now)]));
+    const publicVisibleSessions = this.recentSessions.map((session) =>
+      allVisibleSessions.get(session.threadId) ?? this.visibleSession(session, now));
     return {
       ...snapshot,
-      hostSessions: [...visibleSessions.values()],
+      hostSessions: publicVisibleSessions,
+      activeCatalog: snapshot.activeCatalog && {
+        ...snapshot.activeCatalog,
+        candidates: snapshot.activeCatalog.candidates.map((candidate) => {
+          const sessionId = candidate.conversationId?.toLowerCase();
+          const session = sessionId ? allVisibleSessions.get(sessionId) : undefined;
+          const ownedByHost = sessionId != null && this.sessionIds.has(sessionId);
+          return {
+            ...candidate,
+            ownedByHost,
+            status: ownedByHost && session ? reconcileOwnedStatus(candidate.status, session.status) : candidate.status,
+            ...(session?.contextUsedPercent != null
+              ? { contextUsedPercent: session.contextUsedPercent }
+              : {})
+          };
+        })
+      },
       slots: snapshot.slots.map((slot) => {
         const sessionId = sessionIdFromThreadKey(slot.threadKey);
-        const session = sessionId ? visibleSessions.get(sessionId) : undefined;
+        const session = sessionId ? allVisibleSessions.get(sessionId) : undefined;
         const ownedByHost = sessionId != null && this.sessionIds.has(sessionId);
         return {
           ...slot,
@@ -65,18 +86,25 @@ export class CodexSessionOwnershipIndex {
     };
   }
 
-  markOpened(threadKey: string, _now = Date.now()): void {
-    const sessionId = sessionIdFromThreadKey(threadKey);
+  /** null explicitly forbids deriving an identity from a temporary catalog key. */
+  markOpened(threadKey: string, trustedConversationId?: string | null): void {
+    if (trustedConversationId === null) return;
+    const normalizedTrusted = trustedConversationId?.toLowerCase();
+    const sessionId = normalizedTrusted && sessionIdFromThreadKey(normalizedTrusted) === normalizedTrusted
+      ? normalizedTrusted
+      : trustedConversationId === undefined ? sessionIdFromThreadKey(threadKey) : null;
     if (!sessionId) return;
-    const session = this.recentSessions.find((candidate) => candidate.threadId === sessionId);
+    const session = this.trackedSessionPresence.get(sessionId);
     if (session?.status === "complete" && session.completionRevision != null) {
       this.acknowledgedCompletions.set(sessionId, session.completionRevision);
     }
   }
 
   private async refreshIfNeeded(now: number, trackedSessions: Set<string>): Promise<void> {
-    const needsContext = [...trackedSessions].some((sessionId) => !this.contextParsedSessions.has(sessionId));
-    if (!needsContext && now - this.refreshedAt < this.refreshIntervalMs) return;
+    const plannedRefresh = now - this.refreshedAt >= this.refreshIntervalMs;
+    const needsContext = [...trackedSessions].some((sessionId) =>
+      !this.contextParsedSessions.has(sessionId) && !this.attemptedContextSessions.has(sessionId));
+    if (!plannedRefresh && !needsContext) return;
     if (this.refreshInFlight) return this.refreshInFlight;
     const pending = this.refresh(now, trackedSessions);
     this.refreshInFlight = pending;
@@ -122,9 +150,14 @@ export class CodexSessionOwnershipIndex {
     for (const file of files.sort((left, right) => right.activityAt - left.activityAt)) {
       if (!uniqueRecent.has(file.threadId)) uniqueRecent.set(file.threadId, file);
     }
-    const recent = [...uniqueRecent.values()].slice(0, 128);
+    const uniqueFiles = [...uniqueRecent.values()];
+    const recent = uniqueFiles.slice(0, 128);
+    const recentIds = new Set(recent.map((file) => file.threadId));
+    const trackedExtra = uniqueFiles.filter((file) =>
+      trackedSessions.has(file.threadId) && !recentIds.has(file.threadId));
+    const filesToRead = [...recent, ...trackedExtra];
     const contextParsed = new Set<string>();
-    this.recentSessions = await Promise.all(recent.map(async ({ threadId, path, activityAt: fileActivityAt }) => {
+    const presence = await Promise.all(filesToRead.map(async ({ threadId, path, activityAt: fileActivityAt }) => {
       const shouldRead = now - fileActivityAt <= 15 * 60_000 || trackedSessions.has(threadId);
       const recentStatus = shouldRead
         ? await readRecentSessionStatus(path)
@@ -133,12 +166,25 @@ export class CodexSessionOwnershipIndex {
       const { activityAt, ...status } = recentStatus;
       return { threadId, activityAt: activityAt ?? fileActivityAt, ...status };
     }));
+    this.trackedSessionPresence = new Map(presence.map((session) => [session.threadId, session]));
+    this.recentSessions = recent.map((file) => this.trackedSessionPresence.get(file.threadId)!);
     this.contextParsedSessions = contextParsed;
-    const currentIds = new Set(this.recentSessions.map((session) => session.threadId));
+    this.attemptedContextSessions = new Set(trackedSessions);
+    const currentIds = new Set(this.trackedSessionPresence.keys());
     for (const threadId of this.acknowledgedCompletions.keys()) {
       if (!currentIds.has(threadId)) this.acknowledgedCompletions.delete(threadId);
     }
     this.refreshedAt = now;
+  }
+
+  private visibleSession(session: HostSessionPresence, now: number): HostSessionPresence {
+    const completionIsAcknowledged = session.status === "complete" && session.completionRevision != null &&
+      this.acknowledgedCompletions.get(session.threadId) === session.completionRevision;
+    const completionIsStale = session.status === "complete" && now - session.activityAt > COMPLETION_FRESHNESS_MS;
+    return {
+      ...session,
+      status: completionIsAcknowledged || completionIsStale ? "idle" : session.status
+    };
   }
 }
 

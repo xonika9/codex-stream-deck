@@ -414,7 +414,9 @@ export class DeckController {
         streamDeck.logger.warn(`Codex agent sources differ (${agentSources.join(" ")}). The Windows controller mode determines the combined list; Pinned and Individual assignments merge only hosts using that mode.`);
       }
     }
-    const merged = this.activityIndex.merge(inputs, Date.now(), this.localHost?.hostId);
+    const merged = this.activeQueueEnabled
+      ? this.activityIndex.mergeActiveCatalog(inputs, Date.now(), this.localHost?.hostId)
+      : this.activityIndex.merge(inputs, Date.now(), this.localHost?.hostId);
     this.routedSlots = this.activeQueueEnabled ? projectActiveQueue(merged, inputs) : merged;
 
     const assignments = this.routedSlots.map((slot) => `${slot.id}=${slot.host.platform}:${slot.threadKey ?? "empty"}`).join(" ");

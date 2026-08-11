@@ -91,11 +91,11 @@ In Windows + Mac mode, choose the same agent-source mode in both Codex apps when
 
 ### Active queue
 
-Enable **Active queue** in any Agent action's property inspector to compact relevant tasks into the first Agent keys. The setting applies globally to Agent 1–6 on that computer and defaults to off. It filters only the current set of at most six tasks already routed from Codex: attention and error tasks come first, completion/unread tasks follow in FIFO order when activity times are available, and working tasks follow from newest to oldest. Idle and off tasks are hidden, and the remaining positions close up without gaps.
+Enable **Active queue** in any Agent action's property inspector to compact relevant tasks into the first Agent keys. The setting applies globally to Agent 1–6 on that computer and defaults to off. It draws from Codex's native pinned and unpinned sidebar catalog: attention and error tasks come first, completion/unread tasks follow in FIFO order when activity times are available, and working tasks follow from newest to oldest. Idle and off tasks are hidden, the remaining positions close up without gaps, and the displayed queue remains capped at six.
 
-For the clearest candidate set, select **Most recent chats** in Codex. Codex's native **Priority chats** mode can return six idle slots while an active task sits outside those six; Active queue cannot discover that omitted task, so every healthy Agent key is black in this case. A healthy black position is unassigned and does nothing when pressed. Connecting, degraded, and offline diagnostics remain visible.
+If the renderer's full catalog is temporarily unavailable or incompatible, Active queue fails closed to the existing six native Micro slots without taking the normal snapshot offline. A healthy black position is unassigned and does nothing when pressed. Connecting, degraded, and offline diagnostics remain visible.
 
-On a profile with N Agent buttons, place logical **Agent 1** through **Agent N** next to each other in order. Idle chats cannot be opened from those buttons while the queue is enabled. **Pinned** and **custom** still choose the candidate set, but their fixed physical positions are compacted and may move. Disable Active queue to restore the exact existing single-host or multi-host agent-source layout.
+On a profile with N Agent buttons, place logical **Agent 1** through **Agent N** next to each other in order. Idle chats cannot be opened from those buttons while the queue is enabled. Pinned and unpinned tasks participate in the full native catalog; **custom** deliberately keeps only its six configured candidates, and the queue may still compact the relevant ones. Disable Active queue to restore the exact existing single-host or multi-host agent-source layout.
 
 ## Recommended 15-key layout
 

@@ -1,6 +1,6 @@
 import { OFFICIAL_KEYCAP_IDS, type OfficialKeycapId } from "./keycaps.js";
 import type {
-  CodexHost, HostSessionPresence, MicroActionSlot, MicroDirection, MicroSnapshot, ReasoningAdjustment, RoutedAgentSlot
+  CodexHost, HostSessionPresence, MicroActionSlot, MicroAgentCandidate, MicroDirection, MicroSnapshot, ReasoningAdjustment, RoutedAgentSlot
 } from "./types.js";
 
 export const RELAY_PROTOCOL_VERSION = 1;
@@ -77,6 +77,13 @@ export function normalizeHostSnapshotAtReceipt(
         ...slot,
         activityAt: slot.activityAt == null ? undefined : shift(slot.activityAt)
       })),
+      activeCatalog: input.snapshot.activeCatalog && {
+        ...input.snapshot.activeCatalog,
+        candidates: input.snapshot.activeCatalog.candidates.map((candidate) => ({
+          ...candidate,
+          activityAt: candidate.activityAt == null ? undefined : shift(candidate.activityAt)
+        }))
+      },
       hostSessions: input.snapshot.hostSessions?.map((session) => ({
         ...session,
         activityAt: shift(session.activityAt)!
@@ -106,23 +113,11 @@ export class HostActivityIndex {
         if (!slot.threadKey) continue;
         const key = `${input.host.hostId}:${threadIdentity(slot.threadKey)}`;
         const signature = `${slot.status}:${slot.selected}:${slot.title ?? ""}`;
-        const prior = this.activity.get(key);
-        const explicit = validTimestamp(slot.activityAt);
-        const changed = prior != null && prior.signature !== signature;
-        // A snapshot observation is not task activity. In particular, a newly
-        // connected host must not make all six of its historical slots appear
-        // newer than an already connected host. Only native timestamps or an
-        // actually observed slot change establish cross-host recency.
-        const activityAt = changed
-          ? Math.max(explicit ?? 0, input.observedAt)
-          : explicit ?? prior?.activityAt ?? 0;
-        this.activity.set(key, { activityAt, signature, lastSeenAt: now });
+        const activityAt = this.observeActivity(key, signature, slot.activityAt, input.observedAt, now);
         routed.push({ ...slot, activityAt, host: input.host, sourceSlot: slot.id, observedAt: input.observedAt });
       }
     }
-    for (const [key, value] of this.activity) {
-      if (now - value.lastSeenAt > 86_400_000) this.activity.delete(key);
-    }
+    this.pruneActivity(now);
     if (inputs.length === 0) return [];
     if (inputs.length === 1) return nativeSlotOrder(inputs[0]!, routed);
 
@@ -153,6 +148,102 @@ export class HostActivityIndex {
       .sort(authority.snapshot.agentSource === "priority" ? comparePriority : compareActivity)
       .slice(0, 6)
       .map((slot, id) => ({ ...slot, id }));
+  }
+
+  /** Pools the authoritative renderer catalogs for Active queue only. */
+  mergeActiveCatalog(inputs: HostSnapshot[], now = Date.now(), authoritativeHostId?: string): RoutedAgentSlot[] {
+    if (inputs.length === 0) return [];
+    const authority = inputs.find((input) => input.host.hostId === authoritativeHostId) ?? inputs[0]!;
+    if (authority.snapshot.agentSource === "custom") return this.merge(inputs, now, authoritativeHostId);
+
+    const routed: RoutedAgentSlot[] = [];
+    for (const input of inputs) {
+      const candidates: readonly MicroAgentCandidate[] = input.snapshot.activeCatalog?.complete
+        ? input.snapshot.activeCatalog.candidates
+        : input.snapshot.slots.map((slot) => ({
+            ...slot,
+            threadKey: slot.threadKey ?? "",
+            ...derivedConversationIdentity(slot.threadKey),
+            catalogIndex: slot.id,
+            nativeSlot: slot.id as 0 | 1 | 2 | 3 | 4 | 5
+          }));
+      for (const candidate of candidates) {
+        if (!candidate.threadKey) continue;
+        const identity = candidate.conversationId?.toLowerCase()
+          ?? `${input.host.hostId}:exact:${candidate.threadKey.toLowerCase()}`;
+        const key = `${input.host.hostId}:catalog:${identity}`;
+        const signature = `${candidate.status}:${candidate.selected}:${candidate.title ?? ""}`;
+        const activityAt = this.observeActivity(
+          key, signature, candidate.activityAt, input.observedAt, now);
+        routed.push({
+          id: candidate.nativeSlot ?? 0,
+          threadKey: candidate.threadKey,
+          conversationId: candidate.conversationId,
+          title: candidate.title,
+          status: candidate.status,
+          selected: candidate.selected,
+          activityAt,
+          catalogIndex: candidate.catalogIndex,
+          nativeSlot: candidate.nativeSlot,
+          ownedByHost: candidate.ownedByHost,
+          contextUsedPercent: candidate.contextUsedPercent,
+          host: input.host,
+          sourceSlot: candidate.nativeSlot ?? 0,
+          observedAt: input.observedAt
+        });
+      }
+    }
+    this.pruneActivity(now);
+
+    const mirrors = new Map<string, RoutedAgentSlot[]>();
+    for (const slot of routed) {
+      const identity = slot.conversationId?.toLowerCase()
+        ?? `${slot.host.hostId}:exact:${slot.threadKey!.toLowerCase()}`;
+      const candidates = mirrors.get(identity) ?? [];
+      candidates.push(slot);
+      mirrors.set(identity, candidates);
+    }
+    const sessionOwners = sessionOwnerIndex(inputs);
+    const activeThreads = new Set([
+      ...inputs.flatMap((input) => input.snapshot.activeThreadKey
+        ? [threadIdentity(input.snapshot.activeThreadKey)] : []),
+      ...routed.filter((slot) => slot.selected)
+        .map((slot) => slot.conversationId?.toLowerCase() ?? threadIdentity(slot.threadKey!))
+    ]);
+    return [...mirrors.entries()].map(([identity, candidates]) => {
+      const sessionOwner = sessionOwners.get(identity);
+      const dispatchableOwner = sessionOwner && candidates.some(
+        (candidate) => candidate.host.hostId === sessionOwner.input.host.hostId)
+        ? sessionOwner
+        : undefined;
+      return mergeMirrors(identity, candidates, dispatchableOwner, this.acknowledgedCompletions,
+        activeThreads.has(identity));
+    });
+  }
+
+  private observeActivity(
+    key: string,
+    signature: string,
+    explicitValue: unknown,
+    observedAt: number,
+    now: number
+  ): number {
+    const prior = this.activity.get(key);
+    const explicit = validTimestamp(explicitValue);
+    const changed = prior != null && prior.signature !== signature;
+    // Snapshot receipt is not task activity. Only an explicit renderer time or
+    // an actually observed state change may advance cross-host recency.
+    const activityAt = changed
+      ? Math.max(explicit ?? 0, observedAt)
+      : explicit ?? prior?.activityAt ?? 0;
+    this.activity.set(key, { activityAt, signature, lastSeenAt: now });
+    return activityAt;
+  }
+
+  private pruneActivity(now: number): void {
+    for (const [key, value] of this.activity) {
+      if (now - value.lastSeenAt > 86_400_000) this.activity.delete(key);
+    }
   }
 }
 
@@ -238,7 +329,11 @@ export function parseRelayServerMessage(value: unknown): RelayServerMessage | nu
   if (!isRecord(value) || value.protocol !== RELAY_PROTOCOL_VERSION || typeof value.type !== "string") return null;
   if (value.type === "ready" && isHost(value.host)) return value as RelayReadyMessage;
   if (value.type === "snapshot" && isHost(value.host) && Number.isFinite(value.observedAt) && isSnapshot(value.snapshot)) {
-    return value as RelaySnapshotMessage;
+    const activeCatalog = sanitizeActiveCatalog(value.snapshot.activeCatalog);
+    const snapshot = { ...value.snapshot };
+    if (activeCatalog === undefined) delete snapshot.activeCatalog;
+    else snapshot.activeCatalog = activeCatalog;
+    return { ...value, snapshot } as RelaySnapshotMessage;
   }
   if (value.type === "health" && isHost(value.host) && value.state === "degraded" &&
       value.reason === "native-signals-unavailable" && Number.isFinite(value.observedAt)) {
@@ -276,6 +371,42 @@ function isSnapshot(value: unknown): value is MicroSnapshot {
     (session.completionRevision == null || integerIn(session.completionRevision, 0, Number.MAX_SAFE_INTEGER)) &&
     (session.contextUsedPercent == null || finitePercent(session.contextUsedPercent))
   );
+}
+
+function sanitizeActiveCatalog(
+  value: unknown
+): MicroSnapshot["activeCatalog"] | undefined {
+  if (value == null) return undefined;
+  if (!isRecord(value) || value.complete !== true || !Array.isArray(value.candidates)) return undefined;
+  if (value.candidates.length > 256) return undefined;
+  if (!value.candidates.every(isActiveCatalogCandidate)) return undefined;
+  return {
+    complete: true,
+    candidates: value.candidates.map((candidate) => ({
+      threadKey: candidate.threadKey,
+      ...(candidate.conversationId == null ? {} : { conversationId: candidate.conversationId }),
+      title: candidate.title,
+      status: candidate.status,
+      selected: candidate.selected,
+      ...(candidate.activityAt == null ? {} : { activityAt: candidate.activityAt }),
+      catalogIndex: candidate.catalogIndex,
+      ...(candidate.nativeSlot == null ? {} : { nativeSlot: candidate.nativeSlot }),
+      ...(candidate.ownedByHost == null ? {} : { ownedByHost: candidate.ownedByHost }),
+      ...(candidate.contextUsedPercent == null ? {} : { contextUsedPercent: candidate.contextUsedPercent })
+    }))
+  };
+}
+
+function isActiveCatalogCandidate(value: unknown): value is MicroAgentCandidate {
+  return isRecord(value) && isThreadKey(value.threadKey) &&
+    (value.conversationId == null || (typeof value.conversationId === "string" && BARE_UUID.test(value.conversationId))) &&
+    (value.title === null || (typeof value.title === "string" && value.title.length <= 240)) &&
+    typeof value.status === "string" && value.status.length <= 64 && typeof value.selected === "boolean" &&
+    (value.activityAt == null || validTimestamp(value.activityAt) != null) &&
+    integerIn(value.catalogIndex, 0, Number.MAX_SAFE_INTEGER) &&
+    (value.nativeSlot == null || integerIn(value.nativeSlot, 0, 5)) &&
+    (value.ownedByHost == null || typeof value.ownedByHost === "boolean") &&
+    (value.contextUsedPercent == null || finitePercent(value.contextUsedPercent));
 }
 
 function isUsageSnapshot(value: unknown): boolean {
@@ -447,8 +578,16 @@ function isThreadKey(value: unknown): value is string {
   return typeof value === "string" && /^(?:[a-z][a-z0-9_-]{0,31}:){0,3}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
+const BARE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function threadIdentity(value: string): string {
   return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)?.[0]?.toLowerCase() ?? value;
+}
+
+function derivedConversationIdentity(threadKey: string | null): { conversationId?: string } {
+  if (!threadKey || threadKey.toLowerCase().includes(":client-new-thread:")) return {};
+  const identity = threadIdentity(threadKey);
+  return BARE_UUID.test(identity) ? { conversationId: identity } : {};
 }
 
 function temporaryThreadAliases(

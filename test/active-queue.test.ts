@@ -166,3 +166,110 @@ test("active queue does not retain completion after upstream routing stops repor
   assert.equal(projectActiveQueue([routed(0, "complete", 50, mac, key)], inputs).length, 1);
   assert.deepEqual(projectActiveQueue([routed(0, "idle", 50, mac, key)], inputs), []);
 });
+
+test("full active catalog assigns projected transport slots to tasks outside the native six", () => {
+  const input = snapshot(mac);
+  input.snapshot.activeCatalog = {
+    complete: true,
+    candidates: [
+      { threadKey: thread(81), conversationId: thread(81), title: "Pinned", status: "working", selected: false, activityAt: 200, catalogIndex: 0 },
+      { threadKey: thread(82), conversationId: thread(82), title: "Unpinned", status: "working", selected: false, activityAt: 300, catalogIndex: 9 }
+    ]
+  };
+
+  const merged = new HostActivityIndex().mergeActiveCatalog([input]);
+  const projected = projectActiveQueue(merged, [input]);
+
+  assert.deepEqual(projected.map((slot) => slot.threadKey), [thread(82), thread(81)]);
+  assert.deepEqual(projected.map((slot) => slot.sourceSlot), [0, 1]);
+});
+
+test("full active catalog preserves native transport slots after queue reordering", () => {
+  const input = snapshot(mac);
+  input.snapshot.activeCatalog = {
+    complete: true,
+    candidates: [
+      { threadKey: thread(83), conversationId: thread(83), title: "Native five", status: "working", selected: false, activityAt: 200, catalogIndex: 0, nativeSlot: 4 },
+      { threadKey: thread(84), conversationId: thread(84), title: "Native two", status: "working", selected: false, activityAt: 300, catalogIndex: 1, nativeSlot: 1 }
+    ]
+  };
+
+  const merged = new HostActivityIndex().mergeActiveCatalog([input]);
+  const projected = projectActiveQueue(merged, [input]);
+
+  assert.deepEqual(projected.map((slot) => slot.threadKey), [thread(84), thread(83)]);
+  assert.deepEqual(projected.map((slot) => slot.sourceSlot), [1, 4]);
+});
+
+test("full active catalog distinguishes unavailable fallback from authoritative empty", () => {
+  const fallback = snapshot(mac);
+  fallback.snapshot.slots[0]!.status = "working";
+  assert.equal(new HostActivityIndex().mergeActiveCatalog([fallback]).length, 6);
+
+  const empty = snapshot(mac);
+  empty.snapshot.activeCatalog = { complete: true, candidates: [] };
+  assert.deepEqual(new HostActivityIndex().mergeActiveCatalog([empty]), []);
+});
+
+test("full active catalog keeps temporary keys separate without trusted conversation ids", () => {
+  const input = snapshot(mac);
+  const suffix = "10000000-0000-4000-8000-000000000091";
+  input.snapshot.activeCatalog = {
+    complete: true,
+    candidates: [
+      { threadKey: `local:client-new-thread:${suffix}`, title: "A", status: "working", selected: false, catalogIndex: 0 },
+      { threadKey: `remote:client-new-thread:${suffix}`, title: "B", status: "working", selected: false, catalogIndex: 1 }
+    ]
+  };
+  assert.equal(new HostActivityIndex().mergeActiveCatalog([input]).length, 2);
+});
+
+test("full active catalog de-duplicates by trusted conversation id and routes the owner's exact key", () => {
+  const conversationId = thread(92);
+  const local = snapshot(mac);
+  const remote = snapshot(windows);
+  local.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: `remote:${conversationId}`, conversationId, title: "Mirror", status: "idle",
+    selected: false, catalogIndex: 4
+  }] };
+  remote.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: `local:${conversationId}`, conversationId, title: "Owner", status: "working",
+    selected: false, activityAt: 500, catalogIndex: 1, ownedByHost: true
+  }] };
+  remote.snapshot.hostSessions = [{ threadId: conversationId, activityAt: 500, status: "working" }];
+
+  const merged = new HostActivityIndex().mergeActiveCatalog([local, remote], 1_000, mac.hostId);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]!.host.hostId, windows.hostId);
+  assert.equal(merged[0]!.threadKey, `local:${conversationId}`);
+  assert.equal(merged[0]!.status, "working");
+});
+
+test("full catalog never copies a candidate key onto a session owner that lacks it", () => {
+  const conversationId = thread(93);
+  const local = snapshot(mac);
+  const remote = snapshot(windows);
+  local.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: `remote:${conversationId}`, conversationId, title: "Only dispatchable key",
+    status: "working", selected: false, catalogIndex: 0
+  }] };
+  remote.snapshot.activeCatalog = { complete: true, candidates: [] };
+  remote.snapshot.hostSessions = [{ threadId: conversationId, activityAt: 500, status: "working" }];
+
+  const [merged] = new HostActivityIndex().mergeActiveCatalog([local, remote], 1_000, mac.hostId);
+  assert.equal(merged!.host.hostId, mac.hostId);
+  assert.equal(merged!.threadKey, `remote:${conversationId}`);
+});
+
+test("custom source keeps the fixed native six instead of pooling the full catalog", () => {
+  const input = snapshot(mac);
+  input.snapshot.agentSource = "custom";
+  input.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: thread(99), conversationId: thread(99), title: "Off six", status: "working",
+    selected: false, catalogIndex: 10
+  }] };
+  assert.deepEqual(
+    new HostActivityIndex().mergeActiveCatalog([input]).map((slot) => slot.threadKey),
+    input.snapshot.slots.map((slot) => slot.threadKey)
+  );
+});

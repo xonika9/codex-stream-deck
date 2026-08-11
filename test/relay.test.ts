@@ -13,12 +13,12 @@ import { DeckController } from "../src/controller.js";
 import { Agent1 } from "../src/actions.js";
 import { isAllowedRelayHost, isPrivateLanHost, privateLanAddresses } from "../src/relay-network.js";
 import {
-  CodexRelayServer, readRelayServerConfig, relayDiscoveryTxt,
+  CodexRelayServer, encodeRelaySnapshotMessage, readRelayServerConfig, relayDiscoveryTxt,
   relaySnapshotFailureShouldDegrade, validateRelayServerConfig
 } from "../src/codex-relay-server.js";
 import {
   HostActivityIndex, RELAY_PROTOCOL_VERSION, normalizeHostSnapshotAtReceipt,
-  parseRelayCommand, type HostSnapshot
+  parseRelayCommand, parseRelayServerMessage, type HostSnapshot, type RelaySnapshotMessage
 } from "../src/relay-protocol.js";
 import type { CodexHost, MicroSnapshot, RoutedAgentSlot } from "../src/types.js";
 
@@ -125,7 +125,6 @@ test("relay command parser permits only the narrow native command surface", () =
 });
 
 test("relay snapshot parser bounds and validates host session catalogs", async () => {
-  const { parseRelayServerMessage } = await import("../src/relay-protocol.js");
   const valid = { type: "snapshot", protocol: 1, host, observedAt: 1, snapshot: structuredClone(snapshot) };
   valid.snapshot.hostSessions = [{ threadId: "00000000-0000-4000-8000-000000000000", activityAt: 1, status: "working", completionRevision: 42 }];
   valid.snapshot.hostSessions[0]!.contextUsedPercent = 56;
@@ -170,6 +169,53 @@ test("relay snapshot parser bounds and validates host session catalogs", async (
   }), null);
 });
 
+test("relay validates and sanitizes the optional active catalog without disabling the base snapshot", () => {
+  const valid = { type: "snapshot", protocol: 1, host, observedAt: 1, snapshot: structuredClone(snapshot) };
+  valid.snapshot.activeCatalog = { complete: true, candidates: [{
+    threadKey: "local:00000000-0000-4000-8000-000000000090",
+    conversationId: "00000000-0000-4000-8000-000000000090",
+    title: "Off six", status: "working", selected: false, activityAt: 90,
+    catalogIndex: 7, nativeSlot: 5, ownedByHost: true, contextUsedPercent: 42
+  }] };
+  Object.assign(valid.snapshot.activeCatalog, { prompt: "catalog secret", extra: true });
+  Object.assign(valid.snapshot.activeCatalog.candidates[0]!, {
+    prompt: "candidate secret", response: "private output", extra: { nested: true }
+  });
+  const parsed = parseRelayServerMessage(valid);
+  assert.equal(parsed?.type, "snapshot");
+  if (parsed?.type !== "snapshot") return;
+  assert.equal(parsed.snapshot.activeCatalog?.candidates.length, 1);
+  assert.deepEqual(parsed.snapshot.activeCatalog, { complete: true, candidates: [{
+    threadKey: "local:00000000-0000-4000-8000-000000000090",
+    conversationId: "00000000-0000-4000-8000-000000000090",
+    title: "Off six", status: "working", selected: false, activityAt: 90,
+    catalogIndex: 7, nativeSlot: 5, ownedByHost: true, contextUsedPercent: 42
+  }] });
+
+  const malformed = structuredClone(valid);
+  malformed.snapshot.activeCatalog!.candidates[0]!.threadKey = "../../secret";
+  const sanitized = parseRelayServerMessage(malformed);
+  assert.equal(sanitized?.type, "snapshot");
+  if (sanitized?.type === "snapshot") {
+    assert.equal(sanitized.snapshot.activeCatalog, undefined);
+    assert.deepEqual(sanitized.snapshot.slots, snapshot.slots);
+  }
+
+  const oversized = structuredClone(valid);
+  oversized.snapshot.activeCatalog!.candidates = Array.from(
+    { length: 257 }, (_, catalogIndex) => ({
+      ...valid.snapshot.activeCatalog!.candidates[0]!, catalogIndex,
+      threadKey: `local:00000000-0000-4000-8000-${catalogIndex.toString().padStart(12, "0")}`
+    })
+  );
+  const fallback = parseRelayServerMessage(oversized);
+  assert.equal(fallback?.type, "snapshot");
+  if (fallback?.type === "snapshot") {
+    assert.equal(fallback.snapshot.activeCatalog, undefined);
+    assert.deepEqual(fallback.snapshot.slots, snapshot.slots);
+  }
+});
+
 test("relay health becomes degraded from local receipt age without trusting remote clocks", () => {
   const ready = { state: "ready", changedAt: 900 } as const;
   assert.equal(resolveRelayHealth(ready, true, 1_000, 1_000 + RELAY_SNAPSHOT_STALE_MS).state, "ready");
@@ -196,12 +242,17 @@ test("remote snapshots are normalized to the receiver clock", () => {
     resetCreditsApplicable: 1
   };
   remote.slots[0]!.activityAt = 990_000;
+  remote.activeCatalog = { complete: true, candidates: [{
+    threadKey: remote.slots[0]!.threadKey!, title: "Catalog task", status: "working",
+    selected: false, activityAt: 980_000, catalogIndex: 0
+  }] };
 
   const normalized = normalizeHostSnapshotAtReceipt(
     { host, snapshot: remote, observedAt: 1_000_000 }, 1_030_000);
   assert.equal(normalized.observedAt, 1_030_000);
   assert.equal(normalized.snapshot.slots[0]!.activityAt, 1_020_000);
   assert.equal(normalized.snapshot.hostSessions![0]!.activityAt, 1_000_000);
+  assert.equal(normalized.snapshot.activeCatalog!.candidates[0]!.activityAt, 1_010_000);
   assert.equal(normalized.snapshot.usage!.observedAt, 1_030_000);
   assert.equal(normalized.snapshot.usage!.windows[0]!.resetsAt, 1_630_000);
 });
@@ -650,6 +701,45 @@ test("combined custom mode de-duplicates prefixed mirrors and routes them to the
   assert.equal(merged[1]!.threadKey, windowsSnapshot.slots[1]!.threadKey);
 });
 
+test("active catalog native fallback de-duplicates stable mirrors but keeps temporary keys host-local", () => {
+  const windows: CodexHost = {
+    hostId: "11111111-1111-4111-8111-111111111111", hostName: "Windows", platform: "win32"
+  };
+  const stableId = "34000000-0000-4000-8000-000000000000";
+  const temporaryId = "35000000-0000-4000-8000-000000000000";
+  const windowsSnapshot = structuredClone(snapshot);
+  const macSnapshot = structuredClone(snapshot);
+  windowsSnapshot.slots[0] = {
+    ...windowsSnapshot.slots[0]!, threadKey: `remote:${stableId}`, ownedByHost: false
+  };
+  macSnapshot.slots[0] = {
+    ...macSnapshot.slots[0]!, threadKey: `local:${stableId}`, ownedByHost: true
+  };
+  windowsSnapshot.slots[1] = {
+    ...windowsSnapshot.slots[1]!, threadKey: `remote:client-new-thread:${temporaryId}`
+  };
+  macSnapshot.slots[1] = {
+    ...macSnapshot.slots[1]!, threadKey: `local:client-new-thread:${temporaryId}`
+  };
+  macSnapshot.hostSessions = [{
+    threadId: stableId, activityAt: 1_000, status: "working", completionRevision: undefined
+  }];
+
+  const merged = new HostActivityIndex().mergeActiveCatalog([
+    { host: windows, snapshot: windowsSnapshot, observedAt: 1_000 },
+    { host, snapshot: macSnapshot, observedAt: 1_000 }
+  ], 1_000, windows.hostId);
+
+  const stable = merged.filter((slot) => slot.threadKey?.endsWith(stableId));
+  assert.equal(stable.length, 1);
+  assert.equal(stable[0]!.host.hostId, host.hostId);
+  assert.equal(stable[0]!.conversationId, stableId);
+  const temporary = merged.filter((slot) => slot.threadKey?.endsWith(temporaryId));
+  assert.equal(temporary.length, 2);
+  assert.deepEqual(new Set(temporary.map((slot) => slot.host.hostId)), new Set([windows.hostId, host.hostId]));
+  assert.equal(temporary.every((slot) => slot.conversationId == null), true);
+});
+
 test("combined priority mode ranks waiting, unread, active, then idle", () => {
   const windows: CodexHost = { hostId: "11111111-1111-4111-8111-111111111111", hostName: "Windows", platform: "win32" };
   const windowsSnapshot = structuredClone(snapshot);
@@ -802,6 +892,63 @@ test("authenticated relay publishes snapshots and dispatches typed commands", as
   assert.equal(result.ok, true);
   socket.close();
   await server.close();
+});
+
+test("relay snapshot wire encoding drops an oversized active catalog but preserves the base six slots", () => {
+  const oversized = structuredClone(snapshot);
+  oversized.hostSessions = Array.from({ length: 128 }, (_, index) => ({
+    threadId: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    activityAt: index + 1,
+    status: "working" as const
+  }));
+  oversized.activeCatalog = {
+    complete: true,
+    candidates: Array.from({ length: 64 }, (_, catalogIndex) => ({
+      threadKey: `local:10000000-0000-4000-8000-${catalogIndex.toString().padStart(12, "0")}`,
+      title: "catalog title ".repeat(80),
+      status: "working",
+      selected: false,
+      activityAt: catalogIndex + 1,
+      catalogIndex
+    }))
+  };
+  const message: RelaySnapshotMessage = {
+    type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host, observedAt: 1, snapshot: oversized
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(message), "utf8") > 64 * 1024);
+
+  const encoded = encodeRelaySnapshotMessage(message);
+  const decoded = JSON.parse(encoded) as RelaySnapshotMessage;
+
+  assert.ok(Buffer.byteLength(encoded, "utf8") <= 64 * 1024);
+  assert.equal(decoded.snapshot.activeCatalog, undefined);
+  assert.deepEqual(decoded.snapshot.slots, snapshot.slots);
+  assert.deepEqual(decoded.snapshot.hostSessions, oversized.hostSessions);
+});
+
+test("relay snapshot wire encoding keeps an active catalog that fits", () => {
+  const normal = structuredClone(snapshot);
+  normal.activeCatalog = { complete: true, candidates: [{
+    threadKey: "local:10000000-0000-4000-8000-000000000001",
+    title: "Catalog task", status: "working", selected: false, catalogIndex: 6
+  }] };
+  const message: RelaySnapshotMessage = {
+    type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host, observedAt: 1, snapshot: normal
+  };
+
+  const decoded = JSON.parse(encodeRelaySnapshotMessage(message)) as RelaySnapshotMessage;
+
+  assert.deepEqual(decoded.snapshot.activeCatalog, normal.activeCatalog);
+});
+
+test("relay snapshot wire encoding rejects an oversized base snapshot", () => {
+  const oversized = structuredClone(snapshot);
+  oversized.slots[0]!.title = "oversized base ".repeat(5_000);
+  const message: RelaySnapshotMessage = {
+    type: "snapshot", protocol: RELAY_PROTOCOL_VERSION, host, observedAt: 1, snapshot: oversized
+  };
+
+  assert.throws(() => encodeRelaySnapshotMessage(message), /exceeds the 65536-byte wire payload limit/);
 });
 
 test("running relay publishes refreshed Codex metadata without changing host identity", async () => {

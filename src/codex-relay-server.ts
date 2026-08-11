@@ -13,6 +13,8 @@ import {
 } from "./relay-protocol.js";
 import type { CodexHost } from "./types.js";
 
+const RELAY_MAX_PAYLOAD_BYTES = 64 * 1024;
+
 export type RelayServerConfig = {
   enabled: boolean;
   listenHost: string;
@@ -262,6 +264,7 @@ export class CodexRelayServer {
 
   private async publishSnapshot(only?: WebSocket): Promise<void> {
     const message = await this.currentSnapshotMessage();
+    const encoded = encodeRelaySnapshotMessage(message);
     if (this.consecutiveSnapshotFailures > 0) {
       this.log(`Relay snapshot recovered after ${this.consecutiveSnapshotFailures} transient failure${this.consecutiveSnapshotFailures === 1 ? "" : "s"}.`);
     }
@@ -270,7 +273,6 @@ export class CodexRelayServer {
     this.degraded = false;
     this.lastSnapshotError = "";
     this.lastSnapshotErrorAt = 0;
-    const encoded = JSON.stringify(message);
     for (const socket of only ? [only] : this.authenticated) {
       if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
     }
@@ -289,6 +291,20 @@ export class CodexRelayServer {
     try { return await pending; }
     finally { if (this.snapshotInFlight === pending) this.snapshotInFlight = undefined; }
   }
+}
+
+export function encodeRelaySnapshotMessage(message: RelaySnapshotMessage): string {
+  const encoded = JSON.stringify(message);
+  if (Buffer.byteLength(encoded, "utf8") <= RELAY_MAX_PAYLOAD_BYTES) return encoded;
+
+  if (message.snapshot.activeCatalog) {
+    const snapshot = { ...message.snapshot };
+    delete snapshot.activeCatalog;
+    const fallback = JSON.stringify({ ...message, snapshot });
+    if (Buffer.byteLength(fallback, "utf8") <= RELAY_MAX_PAYLOAD_BYTES) return fallback;
+  }
+
+  throw new Error(`Relay snapshot exceeds the ${RELAY_MAX_PAYLOAD_BYTES}-byte wire payload limit.`);
 }
 
 export function relaySnapshotFailureShouldDegrade(

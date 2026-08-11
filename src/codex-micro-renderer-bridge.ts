@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import WebSocket from "ws";
+import { buildActiveCatalogDiscoveryExpression, buildSnapshotPayloadExpression } from "./codex-active-catalog-expression.js";
 import { codexDeckStateRoot } from "./codex-deck-paths.js";
 import { OFFICIAL_KEYCAP_IDS, type OfficialKeycapId } from "./keycaps.js";
 import { CodexSessionOwnershipIndex } from "./session-ownership.js";
@@ -40,7 +41,7 @@ type CdpResponse = {
 
 export type AgentDispatchPlan =
   | { kind: "native"; slot: number; threadKey: string }
-  | { kind: "direct"; threadKey: string };
+  | { kind: "direct"; slot: number; threadKey: string };
 
 const THREAD_ID_SUFFIX = /(?:^|:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const BARE_THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -80,7 +81,7 @@ export function resolveAgentDispatch(
   const current = snapshot.slots.find((item) => item.threadKey === threadKey);
   return current
     ? { kind: "native", slot: current.id, threadKey }
-    : { kind: "direct", threadKey };
+    : { kind: "direct", slot: requestedSlot, threadKey };
 }
 
 const execFileAsync = promisify(execFile);
@@ -240,6 +241,8 @@ const SNAPSHOT_EXPRESSION = `(async () => {
       toEpoch(slot.thread?.updatedAt) ?? toEpoch(slot.task?.updatedAt)
   }));
 
+${buildActiveCatalogDiscoveryExpression()}
+
   let usage;
   for (const client of queryClients) {
     try {
@@ -331,7 +334,10 @@ const SNAPSHOT_EXPRESSION = `(async () => {
     ? (activeThreadElement.getAttribute('aria-label') ?? activeThreadElement.textContent ?? '').trim().slice(0, 240) || undefined
     : undefined;
 
-  return { slots, activeThreadKey, activeThreadTitle, layout, agentSource, lightingAutoOff, theme, ...(usage ? { usage } : {}) };
+  return ${buildSnapshotPayloadExpression(`{
+    slots, activeThreadKey, activeThreadTitle, layout, agentSource, lightingAutoOff, theme,
+    ...(usage ? { usage } : {})
+  }`)};
 })()`;
 
 export function buildEnsureThreadActivatedExpression(threadKey: string): string {
@@ -440,10 +446,19 @@ export class CodexMicroRendererBridge {
       if (act === 0) return;
     } else {
       if (act === 0) return;
-      this.log(`Task ${plan.threadKey} is outside this host's six native Micro slots; opening its exact thread identity.`);
+      this.log(`Task ${plan.threadKey} is outside this host's six native Micro slots; dispatching its exact native thread identity.`);
+      await this.dispatch("codex-micro-hid-event", {
+        event: { key: `AG0${plan.slot}`, act: 1, slot: plan.slot, threadKey: plan.threadKey }
+      }, "codex-micro-hid-event");
+      const conversationId = snapshot.activeCatalog?.candidates.find(
+        (candidate) => candidate.threadKey === plan.threadKey)?.conversationId;
+      this.sessionOwnership.markOpened(plan.threadKey, conversationId ?? null);
+      return;
     }
     await this.ensureThreadActivated(plan.threadKey);
-    this.sessionOwnership.markOpened(plan.threadKey);
+    const conversationId = snapshot.activeCatalog?.candidates.find(
+      (candidate) => candidate.threadKey === plan.threadKey)?.conversationId;
+    this.sessionOwnership.markOpened(plan.threadKey, conversationId);
   }
 
   private async ensureThreadActivated(threadKey: string): Promise<void> {

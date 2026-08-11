@@ -219,12 +219,12 @@ test("Agent property inspector exposes an informed global active queue opt-in", 
   assert.match(inspector, /id="show-context-rings"[^>]*type="checkbox"[^>]*disabled/);
   assert.match(inspector, /id="active-queue"[^>]*type="checkbox"[^>]*disabled/);
   assert.match(inspector, />Active queue</);
-  assert.match(inspector, /current six/i);
-  assert.match(inspector, /Most recent chats/);
+  assert.match(inspector, /full native pinned \+ unpinned sidebar catalog/i);
+  assert.match(inspector, /fallback to the six Micro slots/i);
   assert.match(inspector, /Agent 1[\s\S]*Agent N/);
   assert.match(inspector, /contiguously/i);
   assert.match(inspector, /idle chats[^<]*unavailable/i);
-  assert.match(inspector, /pinned[\s\S]*custom[\s\S]*(?:compact|move)/i);
+  assert.match(inspector, /custom[\s\S]*six configured candidates[\s\S]*compact/i);
   assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*activeQueueEnabled:/);
   assert.match(inspector, /globalSettings\s*=\s*\{\s*\.\.\.globalSettings,\s*showContextRings:/);
   const settingsReceived = inspector.slice(

@@ -50,7 +50,7 @@ The same plugin runs on Windows and macOS. It discovers the local loopback port 
 
 1. discover the current version-hashed Codex renderer modules;
 2. announce a connected Micro device state;
-3. read the native six-slot state, layout, agent source, and lighting preference;
+3. read the mandatory native six-slot state, layout, agent source, and lighting preference, then optionally discover the bounded native pinned + unpinned sidebar catalog;
 4. dispatch Micro HID and joystick events;
 5. emulate native encoder-rotation HID events for reasoning-effort changes;
 6. resolve standalone keycap actions from Codex's live Micro keycap registry and current official command runner;
@@ -62,19 +62,21 @@ The bridge does not emulate a USB HID device and installs no driver.
 
 `Active queue` is a plugin display option shared by all six Agent actions on one
 computer. An absent or false setting leaves the current native single-host or
-combined multi-host agent-source result unchanged. When enabled, the controller
-projects only the at most six `RoutedAgentSlot` values already produced by host
-routing, ownership resolution, mirror de-duplication, and health handling. It
-does not introduce an agent source or discover tasks outside that routed set.
+combined multi-host agent-source result unchanged. When enabled outside
+`custom`, the controller pools each host's authoritative native pinned +
+unpinned sidebar catalog, resolves trusted conversation mirrors and ownership,
+and only then projects at most six display positions. An absent catalog falls
+back per host to its six Micro slots; an authoritative empty catalog remains
+empty. `custom` keeps its six configured candidates instead of expanding to the
+full catalog; the projection may still compact relevant candidates within that set.
 
 The projection drops `idle`, `off`, and unknown states, then compacts candidates
 into display positions zero through five. Attention and error states sort first;
 completion and unread states use oldest available activity first; working states
 use newest available activity first. Stable source-slot, task, and host identity
 break missing-time or equal-time ties. Display positions may therefore change,
-but commands keep the original source slot, thread identity, and owning host.
-`pinned` and `custom` still determine candidates upstream rather than fixing
-physical positions in this view.
+but commands keep the exact host-local thread key, native transport-slot hint,
+and owning host. Pinned and unpinned tasks share the full catalog in this view.
 
 A missing projected task renders as a black no-op key while the relevant host is
 healthy. Connecting, degraded, and offline states continue through the normal
