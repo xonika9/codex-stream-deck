@@ -3,7 +3,7 @@ import type { RoutedAgentSlot } from "./types.js";
 
 type QueueCandidate = {
   slot: RoutedAgentSlot;
-  group: number;
+  group: QueueGroup;
   activityAt: number | null;
   identity: string;
   rank?: WorkingRank;
@@ -23,11 +23,13 @@ type RankRecord = WorkingRank & {
   trustedRevision?: number;
 };
 
-type QueueState = "idle" | "completion" | "attention" | "working" | "other";
+type QueueGroup = "attention" | "completion" | "working";
+type QueueState = "idle" | "other" | QueueGroup;
 
 const ATTENTION_STATUSES = new Set(["approval", "awaiting-approval", "awaiting-response", "error"]);
 const COMPLETION_STATUSES = new Set(["unread", "complete", "completed", "done"]);
 const WORKING_STATUSES = new Set(["working", "thinking"]);
+const GROUP_ORDER: Record<QueueGroup, number> = { attention: 0, completion: 1, working: 2 };
 const RANK_RETENTION_MS = 24 * 60 * 60 * 1_000;
 
 /** Queue-local, process-memory ranks for one enabled Active queue epoch. */
@@ -138,7 +140,7 @@ export function projectActiveQueue(
       const group = queueGroup(slot.status);
       if (group == null) return [];
       const identity = threadIdentity(slot.threadKey);
-      const sessionActivity = group === 1
+      const sessionActivity = group === "completion"
         ? newestMatchingSessionActivity(sessionsByHost.get(slot.host.hostId), identity)
         : null;
       return [{
@@ -146,7 +148,7 @@ export function projectActiveQueue(
         group,
         activityAt: sessionActivity ?? validTimestamp(slot.activityAt),
         identity,
-        rank: group === 2 ? rankIndex.rank(slot) : undefined
+        rank: group === "working" ? rankIndex.rank(slot) : undefined
       }];
     })
     .sort(compareCandidates)
@@ -158,24 +160,21 @@ export function projectActiveQueue(
     }));
 }
 
-function queueGroup(status: string): number | null {
-  if (ATTENTION_STATUSES.has(status)) return 0;
-  if (COMPLETION_STATUSES.has(status)) return 1;
-  if (WORKING_STATUSES.has(status)) return 2;
+function queueGroup(status: string): QueueGroup | null {
+  if (ATTENTION_STATUSES.has(status)) return "attention";
+  if (COMPLETION_STATUSES.has(status)) return "completion";
+  if (WORKING_STATUSES.has(status)) return "working";
   return null;
 }
 
 function queueState(status: string): QueueState {
   if (status === "idle") return "idle";
-  if (ATTENTION_STATUSES.has(status)) return "attention";
-  if (COMPLETION_STATUSES.has(status)) return "completion";
-  if (WORKING_STATUSES.has(status)) return "working";
-  return "other";
+  return queueGroup(status) ?? "other";
 }
 
 function compareCandidates(left: QueueCandidate, right: QueueCandidate): number {
-  if (left.group !== right.group) return left.group - right.group;
-  if (left.group === 2) return compareWorking(left, right);
+  if (left.group !== right.group) return GROUP_ORDER[left.group] - GROUP_ORDER[right.group];
+  if (left.group === "working") return compareWorking(left, right);
   if (left.activityAt == null || right.activityAt == null) {
     if (left.activityAt != null) return -1;
     if (right.activityAt != null) return 1;

@@ -9,7 +9,8 @@ const COMPLETION_FRESHNESS_MS = 5 * 60_000;
 const WORK_START_RETENTION_MS = 24 * 60 * 60_000;
 const MAX_RETAINED_WORK_STARTS = 512;
 
-type WorkStartRecord = { workStartedAt: number; workStartRevision: number; lastSeenAt: number };
+type WorkStartPair = { workStartedAt: number; workStartRevision: number };
+type WorkStartRecord = WorkStartPair & { lastSeenAt: number };
 
 export class CodexSessionOwnershipIndex {
   private sessionIds = new Set<string>();
@@ -65,34 +66,14 @@ export class CodexSessionOwnershipIndex {
           const sessionId = candidate.conversationId?.toLowerCase();
           const session = sessionId ? allVisibleSessions.get(sessionId) : undefined;
           const ownedByHost = sessionId != null && this.sessionIds.has(sessionId);
-          return {
-            ...candidate,
-            ownedByHost,
-            status: ownedByHost && session ? reconcileOwnedStatus(candidate.status, session.status) : candidate.status,
-            workStartedAt: undefined,
-            workStartRevision: undefined,
-            ...(session?.contextUsedPercent != null
-              ? { contextUsedPercent: session.contextUsedPercent }
-              : {}),
-            ...workStartFields(session)
-          };
+          return { ...candidate, ...ownedSessionFields(candidate.status, session, ownedByHost) };
         })
       },
       slots: snapshot.slots.map((slot) => {
         const sessionId = sessionIdFromThreadKey(slot.threadKey);
         const session = sessionId ? allVisibleSessions.get(sessionId) : undefined;
         const ownedByHost = sessionId != null && this.sessionIds.has(sessionId);
-        return {
-          ...slot,
-          ownedByHost,
-          status: ownedByHost && session ? reconcileOwnedStatus(slot.status, session.status) : slot.status,
-          workStartedAt: undefined,
-          workStartRevision: undefined,
-          ...(session?.contextUsedPercent != null
-            ? { contextUsedPercent: session.contextUsedPercent }
-            : {}),
-          ...workStartFields(session)
-        };
+        return { ...slot, ...ownedSessionFields(slot.status, session, ownedByHost) };
       })
     };
   }
@@ -177,17 +158,15 @@ export class CodexSessionOwnershipIndex {
       const { activityAt, ...status } = recentStatus;
       const observedWorkStart = workStartFields(recentStatus);
       const prior = this.retainedWorkStarts.get(threadId);
-      if (observedWorkStart.workStartRevision != null &&
+      if (observedWorkStart &&
         (prior == null || observedWorkStart.workStartRevision >= prior.workStartRevision)) {
-        this.retainedWorkStarts.set(threadId, { ...observedWorkStart as {
-          workStartedAt: number; workStartRevision: number
-        }, lastSeenAt: now });
+        this.retainedWorkStarts.set(threadId, { ...observedWorkStart, lastSeenAt: now });
       }
       const retained = this.retainedWorkStarts.get(threadId);
       const workStart = retained && now - retained.lastSeenAt <= WORK_START_RETENTION_MS
         ? workStartFields(retained)
-        : {};
-      return { threadId, activityAt: activityAt ?? fileActivityAt, ...status, ...workStart };
+        : null;
+      return { threadId, activityAt: activityAt ?? fileActivityAt, ...status, ...(workStart ?? {}) };
     }));
     this.trackedSessionPresence = new Map(presence.map((session) => [session.threadId, session]));
     this.recentSessions = recent.map((file) => this.trackedSessionPresence.get(file.threadId)!);
@@ -311,10 +290,31 @@ async function readRecentSessionStatus(
 
 function workStartFields(value: {
   workStartedAt?: number; workStartRevision?: number
-} | undefined): { workStartedAt?: number; workStartRevision?: number } {
+} | undefined): WorkStartPair | null {
   return value?.workStartedAt != null && value.workStartRevision != null
     ? { workStartedAt: value.workStartedAt, workStartRevision: value.workStartRevision }
-    : {};
+    : null;
+}
+
+function ownedSessionFields(
+  status: string,
+  session: HostSessionPresence | undefined,
+  ownedByHost: boolean
+): {
+  ownedByHost: boolean;
+  status: string;
+  workStartedAt?: number;
+  workStartRevision?: number;
+  contextUsedPercent?: number;
+} {
+  return {
+    ownedByHost,
+    status: ownedByHost && session ? reconcileOwnedStatus(status, session.status) : status,
+    workStartedAt: undefined,
+    workStartRevision: undefined,
+    ...(session?.contextUsedPercent != null ? { contextUsedPercent: session.contextUsedPercent } : {}),
+    ...(workStartFields(session) ?? {})
+  };
 }
 
 function reconcileOwnedStatus(nativeStatus: string, sessionStatus: HostSessionPresence["status"]): string {
