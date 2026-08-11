@@ -364,6 +364,55 @@ test("trusted revisions are immutable across shifted timestamps and only a highe
     [c.threadKey, a.threadKey, b.threadKey]);
 });
 
+test("a newer first-known trusted start advances ahead of an already promoted task", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = trusted(routed(0, "working", 1, mac, thread(114)), 100, 1);
+  projectActiveQueue([a], [], index, 1_000);
+  const promotedA = { ...a, workStartedAt: 200, workStartRevision: 2 };
+  projectActiveQueue([promotedA], [], index, 2_000);
+
+  const b = trusted(routed(1, "working", 1, mac, thread(115)), 300, 1);
+  assert.deepEqual(keys(projectActiveQueue([promotedA, b], [], index, 3_000)), [b.threadKey, a.threadKey]);
+});
+
+test("an older first-known trusted start does not advance ahead of an already promoted task", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = trusted(routed(0, "working", 1, mac, thread(116)), 100, 1);
+  projectActiveQueue([a], [], index, 1_000);
+  const promotedA = { ...a, workStartedAt: 300, workStartRevision: 2 };
+  projectActiveQueue([promotedA], [], index, 2_000);
+
+  const b = trusted(routed(1, "working", 1, mac, thread(117)), 200, 1);
+  assert.deepEqual(keys(projectActiveQueue([b, promotedA], [], index, 3_000)), [a.threadKey, b.threadKey]);
+});
+
+test("simultaneous higher trusted revisions sort newest first independent of catalog order", () => {
+  const run = (reversed: boolean): string[] => {
+    const index = new ActiveQueueRankIndex();
+    const a = trusted(routed(0, "working", 1, mac, thread(118)), 100, 1);
+    const b = trusted(routed(1, "working", 1, mac, thread(119)), 200, 1);
+    projectActiveQueue([a, b], [], index, 1_000);
+    const promotedA = { ...a, workStartedAt: 400, workStartRevision: 2 };
+    const promotedB = { ...b, workStartedAt: 300, workStartRevision: 2 };
+    return keys(projectActiveQueue(reversed ? [promotedB, promotedA] : [promotedA, promotedB], [], index, 2_000));
+  };
+
+  assert.deepEqual(run(false), [thread(118), thread(119)]);
+  assert.deepEqual(run(true), [thread(118), thread(119)]);
+});
+
+test("clear resets the observed trusted maximum for a fresh epoch", () => {
+  const index = new ActiveQueueRankIndex();
+  const a = trusted(routed(0, "working", 1, mac, thread(126)), 1_000, 1);
+  projectActiveQueue([a], [], index, 1_000);
+  index.clear();
+
+  const b = trusted(routed(1, "working", 1, mac, thread(127)), 100, 1);
+  projectActiveQueue([b], [], index, 2_000);
+  const c = trusted(routed(2, "working", 1, mac, thread(128)), 200, 1);
+  assert.deepEqual(keys(projectActiveQueue([b, c], [], index, 3_000)), [c.threadKey, b.threadKey]);
+});
+
 test("unknown work uses stable first-seen order and infers only idle or completion to working", () => {
   const index = new ActiveQueueRankIndex();
   const a = routed(0, "working", 100, mac, thread(121));

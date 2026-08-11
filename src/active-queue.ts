@@ -38,18 +38,28 @@ export class ActiveQueueRankIndex {
   private nextFirstSeenOrdinal = 0;
   private nextTrustedFront = -1;
   private nextInferredRank = 1;
+  private observed = false;
+  private newestTrustedStartedAt: number | undefined;
 
   clear(): void {
     this.records.clear();
     this.nextFirstSeenOrdinal = 0;
     this.nextTrustedFront = -1;
     this.nextInferredRank = 1;
+    this.observed = false;
+    this.newestTrustedStartedAt = undefined;
   }
 
   observe(slots: readonly RoutedAgentSlot[], now = Date.now()): void {
     const present = new Set(slots.flatMap((slot) => slot.threadKey ? [queueIdentity(slot)] : []));
     this.prune(now, present);
-    const newTrusted: Array<{ identity: string; slot: RoutedAgentSlot; startedAt: number; revision: number }> = [];
+    const trustedEvents: Array<{
+      identity: string;
+      slot: RoutedAgentSlot;
+      startedAt: number;
+      revision: number;
+      firstKnown: boolean;
+    }> = [];
 
     for (const slot of slots) {
       if (!slot.threadKey) continue;
@@ -63,20 +73,19 @@ export class ActiveQueueRankIndex {
           previousState: state
         };
         this.records.set(identity, record);
-        if (trusted) newTrusted.push({ identity, slot, ...trusted });
+        if (trusted) trustedEvents.push({ identity, slot, ...trusted, firstKnown: true });
         continue;
       }
 
       if (trusted) {
         if (record.trustedOwner == null) {
-          newTrusted.push({ identity, slot, ...trusted });
+          trustedEvents.push({ identity, slot, ...trusted, firstKnown: true });
         } else if (record.trustedOwner !== slot.host.hostId) {
           // Ownership handoff is a baseline, not a new work event.
           record.trustedOwner = slot.host.hostId;
           record.trustedRevision = trusted.revision;
         } else if (record.trustedRevision == null || trusted.revision > record.trustedRevision) {
-          record.trustedRank = this.nextTrustedFront--;
-          record.trustedRevision = trusted.revision;
+          trustedEvents.push({ identity, slot, ...trusted, firstKnown: false });
         }
       }
 
@@ -87,15 +96,40 @@ export class ActiveQueueRankIndex {
       record.previousState = state;
     }
 
-    // A seed timestamp is captured once. Later receipt normalization cannot change it.
-    for (const item of newTrusted) {
+    const priorTrustedMaximum = this.newestTrustedStartedAt;
+    const frontEvents: typeof trustedEvents = [];
+    for (const item of trustedEvents) {
       const record = this.records.get(item.identity)!;
-      if (record.trustedRank != null) continue;
-      record.trustedRank = 0;
+      if (item.firstKnown && record.trustedRank != null) continue;
+
+      // The epoch seed keeps timestamp order at rank zero. Later first-known starts
+      // advance only when they are newer than every trusted event already observed.
+      if (!this.observed || (item.firstKnown &&
+          (priorTrustedMaximum == null || item.startedAt > priorTrustedMaximum))) {
+        if (!this.observed) record.trustedRank = 0;
+        else frontEvents.push(item);
+      } else if (!item.firstKnown) {
+        frontEvents.push(item);
+      } else {
+        record.trustedRank = 0;
+      }
+
       record.trustedStartedAt = item.startedAt;
       record.trustedOwner = item.slot.host.hostId;
       record.trustedRevision = item.revision;
+      if (this.newestTrustedStartedAt == null || item.startedAt > this.newestTrustedStartedAt) {
+        this.newestTrustedStartedAt = item.startedAt;
+      }
     }
+
+    // Assign oldest first so the decreasing ranks put the newest event first.
+    // Reverse identity ties make the final ascending identity order stable.
+    frontEvents.sort((left, right) =>
+      left.startedAt - right.startedAt || compareText(right.identity, left.identity));
+    for (const item of frontEvents) {
+      this.records.get(item.identity)!.trustedRank = this.nextTrustedFront--;
+    }
+    this.observed = true;
   }
 
   rank(slot: RoutedAgentSlot): WorkingRank | undefined {
