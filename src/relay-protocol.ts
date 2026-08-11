@@ -130,7 +130,14 @@ export class HostActivityIndex {
         const key = `${input.host.hostId}:${threadIdentity(slot.threadKey)}`;
         const signature = `${slot.status}:${slot.selected}:${slot.title ?? ""}`;
         const activityAt = this.observeActivity(key, signature, slot.activityAt, input.observedAt, now);
-        routed.push({ ...slot, activityAt, host: input.host, sourceSlot: slot.id, observedAt: input.observedAt });
+        routed.push({
+          ...slot,
+          ...derivedConversationIdentity(slot.threadKey),
+          activityAt,
+          host: input.host,
+          sourceSlot: slot.id,
+          observedAt: input.observedAt
+        });
       }
     }
     this.pruneActivity(now);

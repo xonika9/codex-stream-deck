@@ -288,6 +288,51 @@ test("custom source keeps the fixed native six instead of pooling the full catal
   );
 });
 
+test("custom source active queue advances only on a higher trusted native work revision", () => {
+  const input = snapshot(mac);
+  input.snapshot.agentSource = "custom";
+  input.snapshot.slots.forEach((slot) => {
+    slot.status = "idle";
+    slot.selected = false;
+  });
+  Object.assign(input.snapshot.slots[0]!, {
+    status: "working", activityAt: 300, ownedByHost: true, workStartedAt: 300, workStartRevision: 1
+  });
+  Object.assign(input.snapshot.slots[1]!, {
+    status: "working", activityAt: 200, ownedByHost: true, workStartedAt: 200, workStartRevision: 1
+  });
+  Object.assign(input.snapshot.slots[2]!, {
+    status: "working", activityAt: 100, ownedByHost: true, workStartedAt: 100, workStartRevision: 1
+  });
+  const activityIndex = new HostActivityIndex();
+  const rankIndex = new ActiveQueueRankIndex();
+  const project = (now: number) => projectActiveQueue(
+    activityIndex.mergeActiveCatalog([input], now, mac.hostId), [input], rankIndex, now);
+
+  assert.deepEqual(project(1_000).map((slot) => slot.sourceSlot), [0, 1, 2]);
+  Object.assign(input.snapshot.slots[2]!, {
+    selected: true, title: "Opened", activityAt: 9_000
+  });
+  assert.deepEqual(project(2_000).map((slot) => slot.sourceSlot), [0, 1, 2]);
+  Object.assign(input.snapshot.slots[2]!, { workStartedAt: 400, workStartRevision: 2 });
+  assert.deepEqual(project(3_000).map((slot) => slot.sourceSlot), [2, 0, 1]);
+});
+
+test("custom source derives only stable conversation identities from native thread keys", () => {
+  const input = snapshot(mac);
+  input.snapshot.agentSource = "custom";
+  const suffix = thread(99);
+  input.snapshot.slots[1]!.threadKey = `local:${thread(98)}`;
+  input.snapshot.slots[2]!.threadKey = `local:client-new-thread:${suffix}`;
+
+  const merged = new HostActivityIndex().mergeActiveCatalog([input]);
+
+  assert.equal(merged[0]!.conversationId, thread(1));
+  assert.equal(merged[1]!.conversationId, thread(98));
+  assert.equal(merged[2]!.conversationId, undefined);
+  assert.deepEqual(merged.map((slot) => slot.threadKey), input.snapshot.slots.map((slot) => slot.threadKey));
+});
+
 test("working rank is stable across selection, title, activity, catalog reorder, and identical refresh", () => {
   const index = new ActiveQueueRankIndex();
   const a = trusted(routed(0, "working", 300, mac, thread(101)), 300, 1);
