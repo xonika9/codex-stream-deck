@@ -1,5 +1,33 @@
 # Changelog
 
+Versions through `0.7.0.2` below are the historical upstream releases by Dazer. Starting with `1.0.0`, releases belong to the xonika9 fork and use its own plugin identity.
+
+## 1.0.0 - 2026-08-11
+
+First stable xonika9 release.
+
+### Highlights
+
+- Added an opt-in Active queue that discovers the complete native pinned and unpinned Codex task catalog, ranks attention, completed, and working tasks, omits idle history, keeps up to six useful tasks on agent keys, and renders unused keys black.
+- Preserved exact task identity and the captured host across press/release so tasks outside Codex Micro's native six slots can still be opened without a release jumping to a replacement relay host.
+- Hardened optional Windows/macOS relay ownership, socket replacement, stale-message rejection, catalog validation, and UTF-8 payload limits so failures degrade to the native six-slot snapshot instead of leaking or misrouting state.
+- Updated renderer discovery for current Codex desktop internals, including full-catalog status mapping, temporary-thread identity, title rendering, active-thread detection, and native microphone dispatch.
+- Improved Stream Deck title fitting and multiline readability, usage preview assets, local development watching, and release artifact auditing.
+- Kept independent Windows-only, macOS-only, and optional authenticated multi-host operation; Chrome DevTools remains loopback-only.
+
+### Install / update
+
+- Release artifacts now include the xonika9 Stream Deck plugin plus separate Windows and macOS launcher archives with SHA-256 checksums.
+- Release preparation is cross-platform through `npm run release:prepare`; the macOS launcher archive is still built on macOS to preserve executable modes.
+
+### Compatibility
+
+- Codex integration still depends on undocumented desktop renderer internals. Use the release notes and troubleshooting guide when a later Codex build changes those signals.
+
+### Breaking changes
+
+- The plugin UUID and action UUIDs moved from the upstream `com.simeo.codex-deck` namespace to `com.xonika9.codex-deck`. Stream Deck treats this as a separate plugin, so existing upstream profile assignments are not migrated automatically.
+
 ## 0.7.0.2 - 2026-07-22
 
 - Normalize remote snapshot timestamps to local receipt time so ordinary Mac/Windows clock differences cannot hide working, selected, approval, or usage state.

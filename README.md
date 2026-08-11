@@ -188,7 +188,7 @@ Start with [Troubleshooting](docs/TROUBLESHOOTING.md). The important rule is: re
 
 ## Build and release validation
 
-```powershell
+```shell
 npm ci
 npm run check
 npm test
@@ -197,11 +197,11 @@ npm run pack
 npm run audit:release
 ```
 
-`npm run release:prepare` creates a versioned local release-candidate directory with the plugin package, Windows launcher ZIP, and SHA-256 checksums. The macOS ZIP must be created on macOS with `scripts/package-macos-release.sh` so executable bits survive; pass that ZIP to `scripts/prepare-release.ps1 -MacArchivePath ...`.
+`npm run release:prepare -- --version X.Y.Z` creates a versioned local release-candidate directory with the plugin package, launcher ZIPs, and SHA-256 checksums. On macOS it builds both launcher archives automatically. On another platform, create the macOS ZIP on a Mac with `scripts/package-macos-release.sh` so executable bits survive, then pass it with `--mac-archive /path/to/archive.zip`.
 
 For a four-component Stream Deck hotfix version, set
 `CODEX_DECK_RELEASE_VERSION=X.Y.Z.W` while running the macOS packager and pass
-`-ReleaseVersion X.Y.Z.W` to `prepare-release.ps1`. The npm package keeps its
+`--version X.Y.Z.W` to `npm run release:prepare`. The npm package keeps its
 SemVer-compatible prerelease form.
 
 Nothing is published automatically. See [CONTRIBUTING.md](CONTRIBUTING.md).

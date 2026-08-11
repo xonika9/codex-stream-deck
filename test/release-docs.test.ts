@@ -45,17 +45,42 @@ test("local Wi-Fi guide proves Nearby works with Tailscale off and keeps CDP pri
   assert.doesNotMatch(guide, /0\.0\.0\.0/);
 });
 
-test("release checksums use portable LF line endings on Windows", async () => {
-  const source = await text("scripts/prepare-release.ps1");
-  assert.match(source, /\$checksums -join "`n"/);
-  assert.match(source, /WriteAllText/);
-  assert.doesNotMatch(source, /WriteAllLines/);
+test("release checksums use portable LF line endings on every platform", async () => {
+  const source = await text("scripts/prepare-release.mjs");
+  assert.match(source, /checksums\.join\("\\n"\)/);
+  assert.match(source, /SHA256SUMS\.txt/);
 });
 
 test("release preparation audits the completed release directory", async () => {
-  const source = await text("scripts/prepare-release.ps1");
+  const source = await text("scripts/prepare-release.mjs");
   const checksum = source.indexOf("SHA256SUMS.txt");
-  const audit = source.indexOf("node scripts/audit-release.mjs $output");
+  const audit = source.indexOf('"audit-release.mjs"');
   assert.ok(checksum >= 0);
   assert.ok(audit > checksum);
+});
+
+test("release preparation is cross-platform and keeps platform archive boundaries", async () => {
+  const [packageJson, source, windows] = await Promise.all([
+    text("package.json"), text("scripts/prepare-release.mjs"), text("scripts/package-windows-release.ps1")
+  ]);
+  assert.match(packageJson, /"release:prepare": "node scripts\/prepare-release\.mjs"/);
+  assert.match(source, /process\.platform === "win32"/);
+  assert.match(source, /"npm\.cmd"/);
+  assert.match(source, /process\.platform !== "darwin"/);
+  assert.match(source, /package-macos-release\.sh/);
+  assert.match(windows, /Compress-Archive/);
+});
+
+test("npm and Stream Deck release versions use their required compatible forms", async () => {
+  const [packageJson, manifest] = await Promise.all([
+    text("package.json").then(JSON.parse), text("static/manifest.json").then(JSON.parse)
+  ]);
+  const hotfix = /^(\d+\.\d+\.\d+)-hotfix\.(\d+)$/u.exec(packageJson.version);
+  const expectedManifest = hotfix ? `${hotfix[1]}.${hotfix[2]}` : `${packageJson.version}.0`;
+  assert.equal(manifest.Version, expectedManifest);
+});
+
+test("release skill verifies relative checksum entries from the artifact directory", async () => {
+  const checks = await text(".claude/skills/release/references/checks.md");
+  assert.match(checks, /\(cd outputs\/release-vX\.Y\.Z && shasum -a 256 -c SHA256SUMS\.txt\)/);
 });

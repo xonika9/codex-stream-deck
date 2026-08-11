@@ -181,7 +181,7 @@ macOS:   ~/Library/Application Support/CodexDeck/icons
 
 ## Сборка и проверка выпуска
 
-```powershell
+```shell
 npm ci
 npm run check
 npm test
@@ -190,9 +190,9 @@ npm run pack
 npm run audit:release
 ```
 
-Команда `npm run release:prepare` создаёт локальную папку кандидата в выпуск с версией, пакетом плагина, ZIP запускатора Windows и контрольными суммами SHA-256. ZIP для macOS нужно создавать на macOS скриптом `scripts/package-macos-release.sh`, чтобы сохранить исполняемые биты; передайте этот ZIP в `scripts/prepare-release.ps1 -MacArchivePath ...`.
+Команда `npm run release:prepare -- --version X.Y.Z` создаёт локальную папку кандидата в выпуск с пакетом плагина, ZIP запускаторов и контрольными суммами SHA-256. На macOS оба архива запускаторов собираются автоматически. На другой платформе сначала создайте ZIP для macOS на компьютере Mac с помощью `scripts/package-macos-release.sh`, чтобы сохранить исполняемые биты, а затем передайте его через `--mac-archive /path/to/archive.zip`.
 
-Для исправления Stream Deck с четырёхкомпонентной версией задайте `CODEX_DECK_RELEASE_VERSION=X.Y.Z.W` при запуске упаковщика macOS и передайте `-ReleaseVersion X.Y.Z.W` в `prepare-release.ps1`. Пакет npm сохранит форму предварительного выпуска, совместимую с SemVer.
+Для исправления Stream Deck с четырёхкомпонентной версией задайте `CODEX_DECK_RELEASE_VERSION=X.Y.Z.W` при запуске упаковщика macOS и передайте `--version X.Y.Z.W` команде `npm run release:prepare`. Пакет npm сохранит форму предварительного выпуска, совместимую с SemVer.
 
 Ничего не публикуется автоматически. См. [CONTRIBUTING.md](CONTRIBUTING.md).
 

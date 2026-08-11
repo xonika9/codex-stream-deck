@@ -18,3 +18,7 @@ codex-deck-launcher-*.zip
 ios/**/xcuserdata/
 ios/DerivedData/
 ios/Configuration/Local.xcconfig
+!.claude/
+!.claude/skills/
+!.claude/skills/release/
+!.claude/skills/release/**
