@@ -226,7 +226,7 @@ async function readRecentSessionStatus(
       await handle.read(buffer, 0, length, Math.max(0, info.size - length));
       const tail = buffer.toString("utf8");
       const baseOffset = info.size - length;
-      let lifecycle: "working" | "complete" | undefined;
+      let lifecycle: "idle" | "working" | "complete" | undefined;
       let completionRevision: number | undefined;
       let activityAt: number | undefined;
       let workStartedAt: number | undefined;
@@ -255,6 +255,8 @@ async function readRecentSessionStatus(
             lifecycle = "complete";
             completionRevision = baseOffset + lineStart;
             if (Number.isFinite(eventTime)) activityAt = eventTime;
+          } else if (eventType === "turn_aborted") {
+            lifecycle = "idle";
           } else if (["reasoning", "custom_tool_call", "custom_tool_call_output"].includes(responseType ?? "") ||
             (responseType === "message" && event.payload?.role === "assistant")) {
             // Current Codex builds record active reasoning and tool work as

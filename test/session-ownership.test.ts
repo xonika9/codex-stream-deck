@@ -232,6 +232,28 @@ test("a renderer turn_context after task_complete does not resurrect a finished 
   }
 });
 
+test("a turn_aborted returns an owned task to idle until the next task_started", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-deck-aborted-turn-"));
+  try {
+    const threadId = "10000000-0000-4000-8000-000000000014";
+    const path = join(root, `rollout-now-${threadId}.jsonl`);
+    await writeFile(path,
+      '{"type":"event_msg","payload":{"type":"task_started"}}\n' +
+      '{"type":"event_msg","payload":{"type":"turn_aborted"}}\n');
+    const index = new CodexSessionOwnershipIndex([root], 0);
+    let state = await index.annotate(snapshotFor(threadId, false), Date.now());
+    assert.equal(state.hostSessions?.find((session) => session.threadId === threadId)?.status, "idle");
+    assert.equal(state.slots[0]!.status, "idle");
+
+    await appendFile(path, '{"type":"event_msg","payload":{"type":"task_started"}}\n');
+    state = await index.annotate(snapshotFor(threadId, false), Date.now() + 1);
+    assert.equal(state.hostSessions?.find((session) => session.threadId === threadId)?.status, "working");
+    assert.equal(state.slots[0]!.status, "working");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("acknowledging a completion survives later file touches but a new completion becomes unread", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-deck-completion-ack-"));
   try {
