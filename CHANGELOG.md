@@ -2,6 +2,14 @@
 
 Versions through `0.7.0.2` below are the historical upstream releases by Dazer. Starting with `1.0.0`, releases belong to the xonika9 fork and use its own plugin identity.
 
+## 1.0.1 - 2026-08-22
+
+- Fixed handling of `turn_aborted` so stopped Codex tasks no longer remain in the Active queue as working.
+- Stabilized working-task order around the latest structural user work start instead of incidental selection, title, activity, or snapshot changes.
+- Added a stable fallback for tasks without a trusted start event and retained their queue rank across brief disappearance for up to 24 hours.
+- Carried optional work-start metadata through relay protocol v1 while preserving compatibility with mixed plugin and launcher versions.
+- Updated multi-host compatibility notes, troubleshooting guidance, and queue-order diagnostics.
+
 ## 1.0.0 - 2026-08-11
 
 First stable xonika9 release.
